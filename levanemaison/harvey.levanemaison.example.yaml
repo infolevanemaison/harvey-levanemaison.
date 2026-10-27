@@ -1,0 +1,100 @@
+# Harvey para Levanemaison: plantilla de configuración.
+#
+# Cópiala como harvey.local.yaml (está en .gitignore, así que tus cambios no
+# se suben a GitHub):   cp levanemaison/harvey.levanemaison.example.yaml harvey.local.yaml
+#
+# Aquí NO van claves ni contraseñas: esas van en .env (también ignorado) o
+# en los secretos del entorno de Claude Code.
+#
+# Los valores "COMPLETAR" son decisiones tuyas. Mientras sigan así, Harvey
+# no debe enviar nada (y con require_approval: true nunca envía sin ti).
+
+persona:
+  name: "COMPLETAR (tu nombre)"
+  company: "Levanemaison"
+  role: "Colaboraciones y comunidad"
+  # Buzón de un dominio secundario dedicado (nunca el principal de la tienda).
+  email: "colaboraciones@COMPLETAR.example"
+  linkedin: ""
+  tone: "cercano, elegante y directo; como la persona que lleva una pequeña marca de moda, no una agencia"
+
+product:
+  name: "Levanemaison"
+  description: >-
+    Tienda online española de moda femenina para mujeres de 35 a 65 años:
+    vestidos, blazers y chaquetas, conjuntos, faldas y calzado cómodo
+    (mocasines, Mary Jane, escarpines). Prendas favorecedoras y fáciles de
+    llevar, para el trabajo, eventos y el día a día.
+  pricing: "Prendas entre 35 y 80 euros aproximadamente"
+  key_benefits:
+    - "Prendas pensadas para mujeres de 35 a 65 años, no para tallas o cuerpos de veinteañeras"
+    - "Estilo elegante y cómodo a la vez, que se puede llevar a diario"
+    - "Precios accesibles para una comunidad que busca calidad sin lujo"
+  objection_responses:
+    "no trabajo gratis": "Totalmente lógico. Cuéntame tus condiciones y vemos si encajan; podemos combinar prenda, comisión por venta y tarifa."
+    "no conozco la marca": "Normal, somos una marca pequeña. Te enviamos una prenda para que la pruebes antes de decidir nada, sin obligación de publicar."
+    "no es mi estilo": "Gracias por decirlo. ¿Hay alguna pieza de la colección que sí te encaje, o prefieres que lo dejemos aquí?"
+  offer:
+    # COMPLETAR antes de contactar a nadie: cifras que sean rentables para ti.
+    primary: "Colaboración con prenda de regalo + código de descuento propio + comisión por venta (COMPLETAR %)"
+    entry: "Probar una prenda de la colección sin obligación de publicar"
+    goal: "get_reply"
+    booking_method: "ask_preference"
+    booking_url: ""
+    meeting_duration: "15 minutos"
+    meeting_owner: "COMPLETAR"
+
+icp:
+  # Para el módulo de influencers (docs/levanemaison/modulo-influencers.md).
+  # La búsqueda de empresas de Harvey no encuentra creadoras: esto da
+  # contexto al redactor y a la futura lista revisada a mano.
+  industries:
+    - "creadora de contenido de moda mujer 40+"
+    - "influencer de estilo para mujeres de más de 50"
+    - "blog de moda madura"
+  company_size: "nano y micro creadoras (5.000 a 100.000 seguidoras)"
+  titles:
+    - "Creadora de contenido"
+    - "Influencer de moda"
+    - "Bloguera de estilo"
+  geography:
+    - "España"
+  hiring_signals: []
+
+channels:
+  email:
+    enabled: true
+    provider: "gmail"
+    # Cifras bajas a propósito: mensajes uno a uno, no envíos masivos.
+    max_daily_sends: 10
+    require_approval: true      # NUNCA en false sin una decisión explícita tuya
+    send_to_risky: false
+    max_bounce_rate: 0.03
+    link_domains: ["levanemaison.com"]
+  linkedin:
+    enabled: false              # no automatizar LinkedIn (sus condiciones lo prohíben)
+
+usage:
+  max_daily_claude_percent: 50
+  heartbeat_interval_minutes: 60
+  quiet_hours:
+    start: "20:00"
+    end: "09:00"
+    timezone: "Europe/Madrid"
+
+locale:
+  language: "es"                # es ahora; fr cuando empecemos con Francia
+  country: "ES"
+  formality: "informal"         # "tú" con creadoras; en francés siempre "vous"
+
+compliance:
+  # LSSI art. 10: identificación del prestador. COMPLETAR con razón social,
+  # NIF y dirección postal antes de cualquier envío.
+  postal_address: ""
+  # Déjala tal cual: la frase por defecto (en inglés) se escribe en el idioma
+  # configurado: '¿No te interesa? Responde "baja" y no volveré a escribirte.'
+  # Si la cambias, debe pedir una respuesta que Harvey reconozca ("baja").
+  opt_out_line: 'Not interested? Reply "no thanks" and I won''t email again.'
+  do_not_contact: []
+  precleared:
+    enabled: false              # solo admite remitentes de GB o US

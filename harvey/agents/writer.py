@@ -18,6 +18,7 @@ from harvey.brain import Brain
 from harvey.config import HarveyConfig
 from harvey.humanize import humanize, humanizer_enabled
 from harvey.integrations.mail_provider import NATIVE_PROVIDERS
+from harvey.locales import writing_rules
 from harvey.models.campaign import Campaign, EmailStep
 from harvey.state import WRITABLE_EMAIL_STATUSES, StateManager
 from harvey.sending_mode import sync_sending_mode
@@ -325,6 +326,7 @@ class Writer:
         ) or ""
         if self.skills:
             prompt += "\n\n" + self.skills
+        prompt += writing_rules(self.config)
         if startup is not None:
             prompt += self._startup_playbook()
         prompt += await self._feedback_block([prospect.id])
@@ -409,6 +411,7 @@ Pricing: {self.config.product.pricing}"""
         # Inject email framework skills
         if self.skills:
             prompt += "\n\n" + self.skills
+        prompt += writing_rules(self.config)
         # One template goes to the whole batch: founder framing only when
         # every prospect in it is a startup.
         backed = [await self._startup(p.company_id) for p in prospects]

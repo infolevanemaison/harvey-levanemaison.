@@ -77,6 +77,44 @@ class ICPConfig(BaseModel):
     keyword_variants: dict[str, list[str]] = {}
 
 
+class LocaleConfig(BaseModel):
+    """The language Harvey writes in and the country it prospects in.
+
+    "en" with no country is Harvey's original behaviour. "es" writes in
+    Spanish from Spain, "fr" in French from France: the writer, the
+    pre-send gate, opt-out detection, web search and the footer all follow
+    (see harvey/locales.py). formality picks "tú"/"usted" in Spanish;
+    French business email is always "vous".
+    """
+    language: str = "en"        # en | es | fr
+    country: str = ""           # ISO code, e.g. ES or FR; "" = from language
+    formality: str = "formal"   # formal | informal
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _known_language(cls, v):
+        v = (v or "en").strip().lower()
+        if v not in ("en", "es", "fr"):
+            raise ValueError("locale.language must be en, es or fr")
+        return v
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def _country_code(cls, v):
+        v = (v or "").strip().upper()
+        if v and not re.fullmatch(r"[A-Z]{2}", v):
+            raise ValueError("locale.country must be a two-letter code, e.g. ES or FR")
+        return v
+
+    @field_validator("formality", mode="before")
+    @classmethod
+    def _known_formality(cls, v):
+        v = (v or "formal").strip().lower()
+        if v not in ("formal", "informal"):
+            raise ValueError("locale.formality must be formal or informal")
+        return v
+
+
 class WarmupConfig(BaseModel):
     """Cold-email ramp for a new domain or mailbox.
 
@@ -376,9 +414,13 @@ DEFAULT_OPT_OUT_LINE = 'Not interested? Reply "no thanks" and I won\'t email aga
 # The replies the Handler always honours as an opt-out on their own; an
 # opt_out_line must ask for one of them ("Reply STOP", 'reply "no thanks"').
 OPT_OUT_WORDS = ("no thanks", "no thank you", "unsubscribe", "stop", "remove me",
-                 "opt out")
+                 "opt out",
+                 # Spanish and French (harvey/locales.py), matched without accents.
+                 "baja", "no gracias", "non merci", "desinscription", "desabonnement")
 _ASKS_FOR_OPT_OUT_RE = re.compile(
-    r"\breply(?:\s+with)?\s*[\"'\u201c\u2018]?\s*(?:"
+    r"\b(?:reply(?:\s+with)?|respond[ae](?:\s+con)?|contest[ae](?:\s+con)?"
+    r"|repondez(?:\s+par)?|repondre(?:\s+par)?)"
+    r"\s*[\"'\u201c\u2018\u00ab]?\s*(?:"
     + "|".join(re.escape(w) for w in OPT_OUT_WORDS) + r")\b", re.IGNORECASE)
 
 
@@ -444,7 +486,8 @@ class ComplianceConfig(BaseModel):
                 "opt_out_line can't contain a link or an email address: cold email "
                 "allows one link, and opting out must be as simple as replying."
             )
-        if not _ASKS_FOR_OPT_OUT_RE.search(v):
+        from harvey.locales import fold
+        if not _ASKS_FOR_OPT_OUT_RE.search(fold(v)):
             raise ValueError(
                 "opt_out_line must ask for a reply Harvey recognises as an opt-out, "
                 'e.g. Reply "no thanks" / Reply STOP. Recognised: '
@@ -460,10 +503,17 @@ def compliance_of(config) -> ComplianceConfig:
 
 
 def compliance_footer_lines(config) -> list[str]:
-    """The lines added under every cold email: address, then opt-out line."""
+    """The lines added under every cold email: address, then opt-out line.
+
+    An opt-out line left at the English default is written in the outreach
+    language instead (locale.language), so a Spanish email doesn't end in
+    English."""
+    from harvey.locales import default_opt_out_line
     compliance = compliance_of(config)
-    return [line for line in (compliance.postal_address.strip(),
-                              compliance.opt_out_line.strip()) if line]
+    opt_out = compliance.opt_out_line.strip()
+    if opt_out == DEFAULT_OPT_OUT_LINE:
+        opt_out = default_opt_out_line(config) or opt_out
+    return [line for line in (compliance.postal_address.strip(), opt_out) if line]
 
 
 def compliance_notice(config) -> str:
@@ -605,6 +655,7 @@ class HarveyConfig(BaseModel):
     brain: BrainConfig = BrainConfig()
     compliance: ComplianceConfig = ComplianceConfig()
     writer: WriterConfig = WriterConfig()
+    locale: LocaleConfig = LocaleConfig()
     # The file it was loaded from, so a running Harvey can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)

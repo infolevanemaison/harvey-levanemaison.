@@ -12,6 +12,8 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+from harvey.locales import fold
+
 # Spam-filter and AI-tell phrases that must never appear in outgoing mail.
 # Mirrors prompts/writer.md; enforced here because prompts can be ignored.
 BANNED_PHRASES = (
@@ -25,6 +27,23 @@ BANNED_PHRASES = (
     "cutting-edge solution", "revolutionize your", "unlock your",
     "supercharge your", "as an ai", "i'm an ai", "i am an ai",
     "as a language model",
+    # Spanish (Spain) and French (France), written without accents: the
+    # check compares accent-folded text (harvey/locales.py), so "haz clic
+    # aquí" and "haz clic aqui" are both caught.
+    "compra ahora", "compra ya", "haz clic aqui", "haga clic aqui",
+    "oferta exclusiva", "oferta especial", "oferta limitada", "tiempo limitado",
+    "sin compromiso", "100% gratis", "gana dinero", "has ganado",
+    "no te lo pierdas", "ultima oportunidad",
+    "espero que este correo te encuentre bien", "espero que este correo le encuentre bien",
+    "espero que este mensaje te encuentre bien", "espero que este mensaje le encuentre bien",
+    "llevar tu negocio al siguiente nivel", "como modelo de lenguaje",
+    "como inteligencia artificial", "soy una ia",
+    "achetez maintenant", "cliquez ici", "offre exclusive", "offre speciale",
+    "offre limitee", "duree limitee", "sans engagement", "100% gratuit",
+    "gagnez de l'argent", "vous avez gagne", "ne manquez pas", "derniere chance",
+    "j'espere que ce message vous trouve bien", "j'espere que cet e-mail vous trouve bien",
+    "j'espere que ce mail vous trouve bien", "en tant que modele de langage",
+    "en tant qu'ia", "je suis une ia",
 )
 
 MAX_SUBJECT_LEN = 90
@@ -223,7 +242,7 @@ def pre_send_check(
         reasons.append(f"unrendered merge tags: {sorted(set(leftover))[:3]}")
 
     # Banned phrases (spam triggers + AI tells)
-    lowered = (subject + " " + body).lower()
+    lowered = fold((subject + " " + body).replace("\u2019", "'"))
     hits = [p for p in BANNED_PHRASES if p in lowered]
     if hits:
         reasons.append(f"banned phrases: {hits[:3]}")
