@@ -576,3 +576,33 @@ def test_no_collaboration_with_someone_who_opted_out(tmp_path):
     store.set_status(cid, "opted_out")
     with pytest.raises(ValueError):
         store.add_collaboration(cid, {"acordado": "x"})
+
+
+# ── Inbox import ──
+
+from harvey.creators.followups import process_inbox  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_inbox_handles_known_senders_once_and_ignores_others(tmp_path):
+    store, cid, _ = _contacted(tmp_path)
+    brain = ProposalBrain({"subject": "Re: una idea", "body": "Hola Carmen, te cuento con calma."})
+    messages = [
+        {"from": "Carmen <Colabora@Estilo.example>", "subject": "Re: una idea",
+         "body": "Hola, ¿qué tenías en mente?", "message_id": "m-1"},
+        {"from": "otra@desconocida.example", "subject": "Hola", "body": "x", "message_id": "m-2"},
+    ]
+    first = await process_inbox(store, messages, brain, config())
+    assert [r["outcome"] for r in first] == ["answer", "unknown_sender"]
+    again = await process_inbox(store, messages, brain, config())
+    assert again[0]["outcome"] == "already_handled"
+    assert len([p for p in store.list_proposals() if p["kind"] == "reply"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_inbox_opt_out_is_applied(tmp_path):
+    store, cid, _ = _contacted(tmp_path)
+    brain = ProposalBrain({"subject": "x", "body": "y"})
+    result = await process_inbox(store, [{"from": "colabora@estilo.example", "subject": "Re",
+                                          "body": "Non merci.", "message_id": "m-9"}], brain, config())
+    assert result[0]["outcome"] == "opt_out" and store.get(cid)["status"] == "opted_out"

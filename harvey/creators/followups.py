@@ -141,3 +141,30 @@ async def handle_reply(store, cid: str, text: str, brain, config,
                              reply_to=message_id)
     return {"outcome": "answer", "proposal_id": pid, "subject": subject, "body": body,
             "issues": issues}
+
+
+async def process_inbox(store, messages: list[dict], brain, config) -> list[dict]:
+    """Messages read from Gmail (through the connector, from the phone):
+    [{"from": "...", "subject": "...", "body": "...", "message_id": "..."}].
+
+    Only messages from a creator's own professional address are handled;
+    anything else is reported as unknown and left alone. Each message is
+    handled once, so importing the same export twice is harmless."""
+    from email.utils import parseaddr
+    results = []
+    for msg in messages:
+        mid = str(msg.get("message_id") or "").strip()
+        sender = parseaddr(str(msg.get("from") or ""))[1].lower()
+        if mid and store.seen(mid):
+            results.append({"message_id": mid, "from": sender, "outcome": "already_handled"})
+            continue
+        row = store.find_by_email(sender)
+        if row is None:
+            results.append({"message_id": mid, "from": sender, "outcome": "unknown_sender"})
+            continue
+        result = await handle_reply(store, row["id"], str(msg.get("body") or ""), brain, config,
+                                    message_id=mid, thread_subject=str(msg.get("subject") or ""))
+        if mid:
+            store.mark_seen(mid)
+        results.append({"message_id": mid, "from": sender, "creator_id": row["id"], **result})
+    return results

@@ -77,6 +77,10 @@ CREATE TABLE IF NOT EXISTS collaborations (
     created_at TEXT,
     updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS inbox_seen (
+    message_id TEXT PRIMARY KEY,
+    seen_at TEXT
+);
 CREATE TABLE IF NOT EXISTS results (
     creator_id TEXT NOT NULL,
     period TEXT NOT NULL,
@@ -400,6 +404,29 @@ class CreatorStore:
         for r in rows:
             r["terms"] = json.loads(r.pop("terms_json") or "{}")
         return rows
+
+    # ── Inbox ──
+
+    def find_by_email(self, email: str) -> dict | None:
+        """The creator whose professional contact is this address."""
+        email = (email or "").strip().lower()
+        if not email:
+            return None
+        for row in self.list_creators():
+            if (row["creator"].pro_contact_email or "").strip().lower() == email:
+                return row
+        return None
+
+    def seen(self, message_id: str) -> bool:
+        with closing(self._db()) as db:
+            return db.execute("SELECT 1 FROM inbox_seen WHERE message_id = ?",
+                              (message_id,)).fetchone() is not None
+
+    def mark_seen(self, message_id: str) -> None:
+        with closing(self._db()) as db:
+            db.execute("INSERT OR IGNORE INTO inbox_seen (message_id, seen_at) VALUES (?, ?)",
+                       (message_id, _now()))
+            db.commit()
 
     # ── Results ──
 

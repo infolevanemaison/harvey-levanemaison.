@@ -43,6 +43,12 @@ Ese archivo no se sube a GitHub. Completa con Claude los campos `COMPLETAR`
 - en otro caso se prepara una respuesta en su idioma que espera tu aprobación
   y, aprobada, va como borrador **dentro del mismo hilo** de Gmail.
 
+**Revisar el correo de golpe:** «Mira en Gmail si han respondido las
+creadoras». Claude busca en tu Gmail con el conector, guarda los mensajes
+en un JSON fuera del repositorio y ejecuta `harvey creators inbox
+mensajes.json`. Cada mensaje se procesa una sola vez y se ignoran los
+remitentes que no son creadoras de tu lista.
+
 **Recordatorio:** como máximo uno, a los 7 días sin respuesta
 (`harvey creators followup <id>`). A los 21 días se propone cerrarla, sin
 volver a escribir.

@@ -15,7 +15,7 @@ from harvey.creators.store import CreatorStore
 
 ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "propose", "proposals",
            "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo",
-           "followup", "reply", "collab", "collab-set", "collabs", "link",
+           "followup", "reply", "inbox", "collab", "collab-set", "collabs", "link",
            "report", "queries", "purge")
 
 
@@ -282,6 +282,27 @@ def cmd_creators(args) -> None:
             print(f"\n  Sin respuesta automática: {result['why']}.\n")
         else:
             _show_new(result["proposal_id"], "", result["subject"], result["body"], result["issues"])
+        return
+
+    if action == "inbox":
+        # A JSON export of Gmail messages (Claude reads them with the Gmail
+        # connector). Personal data: keep the file out of the repository.
+        path = _need(args, "el JSON con los mensajes")
+        with open(path, encoding="utf-8") as f:
+            messages = json.load(f)
+        config = _config()
+
+        async def _process():
+            from harvey.creators.followups import process_inbox
+            return await process_inbox(store, messages, await _brain(config), config)
+        for r in asyncio.run(_process()):
+            outcome = r["outcome"]
+            label = {"opt_out": "BAJA aplicada", "escalate": "para ti (sin respuesta automática)",
+                     "answer": f"respuesta propuesta {r.get('proposal_id', '')}",
+                     "unknown_sender": "remitente desconocido: ignorado",
+                     "already_handled": "ya procesado", "ignored": "ya era baja"}.get(outcome, outcome)
+            print(f"  {r['from'] or '?'}: {label}")
+        print()
         return
 
     if action == "collab":
