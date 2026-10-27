@@ -28,7 +28,9 @@ DEFAULT_DB = PROJECT_ROOT / "data" / "creators.db"
 
 CREATOR_STATUSES = ("candidate", "approved", "drafted", "contacted", "replied",
                     "negotiating", "collaborating", "measured", "rejected", "opted_out")
-PROPOSAL_STATUSES = ("pending_review", "approved", "rejected", "drafted")
+PROPOSAL_STATUSES = ("pending_review", "approved", "rejected", "drafted", "sent")
+PROPOSAL_KINDS = ("first", "followup", "reply")
+COLLAB_STATUSES = ("agreed", "shipped", "published", "measured", "closed", "cancelled")
 # Candidates nobody approved are deleted after this long (data minimisation).
 CANDIDATE_RETENTION_DAYS = 180
 
@@ -57,6 +59,21 @@ CREATE TABLE IF NOT EXISTS proposals (
     status TEXT DEFAULT 'pending_review',
     issues_json TEXT DEFAULT '[]',
     draft_ref TEXT DEFAULT '',
+    created_at TEXT,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS collaborations (
+    id TEXT PRIMARY KEY,
+    creator_id TEXT NOT NULL,
+    status TEXT DEFAULT 'agreed',
+    terms_json TEXT DEFAULT '{}',
+    code TEXT DEFAULT '',
+    link TEXT DEFAULT '',
+    shipped_on TEXT DEFAULT '',
+    content_due TEXT DEFAULT '',
+    post_urls TEXT DEFAULT '',
+    labelled_as_ad INTEGER,
+    notes TEXT DEFAULT '',
     created_at TEXT,
     updated_at TEXT
 );
@@ -132,6 +149,14 @@ class CreatorStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._db()) as db:
             db.executescript(SCHEMA)
+            # Columns added after the first release of this file.
+            for ddl in ("ALTER TABLE proposals ADD COLUMN kind TEXT DEFAULT 'first'",
+                        "ALTER TABLE proposals ADD COLUMN reply_to TEXT DEFAULT ''",
+                        "ALTER TABLE proposals ADD COLUMN sent_on TEXT DEFAULT ''"):
+                try:
+                    db.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass  # already there
             db.commit()
 
     def _db(self) -> sqlite3.Connection:
@@ -236,6 +261,7 @@ class CreatorStore:
         stub = Creator(handle=current["handle"], platform=current["platform"])
         with closing(self._db()) as db:
             db.execute("DELETE FROM proposals WHERE creator_id = ?", (cid,))
+            db.execute("DELETE FROM collaborations WHERE creator_id = ?", (cid,))
             db.execute("DELETE FROM results WHERE creator_id = ?", (cid,))
             db.execute("UPDATE creators SET data_json = ?, score_json = '{}', score = 0, "
                        "verdict = '', status = 'opted_out', notes = '', updated_at = ? "
@@ -254,14 +280,20 @@ class CreatorStore:
     # ── Proposals ──
 
     def add_proposal(self, cid: str, language: str, subject: str, body: str,
-                     issues: list[str]) -> str:
+                     issues: list[str], kind: str = "first", reply_to: str = "") -> str:
+        """kind: first (the opening message), followup (the one reminder) or
+        reply (an answer to something she wrote; reply_to is her message id)."""
+        if kind not in PROPOSAL_KINDS:
+            raise ValueError(f"unknown proposal kind {kind!r}")
         pid = uuid.uuid4().hex[:8]
         now = _now()
         with closing(self._db()) as db:
             db.execute(
                 "INSERT INTO proposals (id, creator_id, language, subject, body, status, "
-                "issues_json, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                (pid, cid, language, subject, body, "pending_review", json.dumps(issues), now, now))
+                "issues_json, kind, reply_to, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (pid, cid, language, subject, body, "pending_review", json.dumps(issues),
+                 kind, reply_to, now, now))
             db.commit()
         return pid
 
@@ -302,6 +334,72 @@ class CreatorStore:
                        "status = 'pending_review', updated_at = ? WHERE id = ?",
                        (subject, body, json.dumps(issues), _now(), pid))
             db.commit()
+
+    def mark_sent(self, pid: str, on: str = "") -> None:
+        """A person sent the draft from Gmail. Only now has she been contacted."""
+        proposal = self.get_proposal(pid)
+        if proposal is None:
+            raise KeyError(pid)
+        if proposal["status"] != "drafted":
+            raise ValueError(f"proposal {pid} is {proposal['status']}, not a Gmail draft")
+        day = on or _now()[:10]
+        with closing(self._db()) as db:
+            db.execute("UPDATE proposals SET status = 'sent', sent_on = ?, updated_at = ? "
+                       "WHERE id = ?", (day, _now(), pid))
+            db.commit()
+        if self.get(proposal["creator_id"])["status"] in ("approved", "drafted"):
+            self.set_status(proposal["creator_id"], "contacted")
+
+    # ── Collaborations ──
+
+    def add_collaboration(self, cid: str, terms: dict, code: str = "", link: str = "",
+                          content_due: str = "") -> str:
+        """A collaboration both sides agreed to. terms is what was agreed
+        (pieces, value, commission, fee) in a person's words and numbers."""
+        row = self.get(cid)
+        if row is None:
+            raise KeyError(cid)
+        if row["status"] in ("opted_out", "rejected"):
+            raise ValueError(f"the creator is {row['status']}")
+        kid = uuid.uuid4().hex[:8]
+        now = _now()
+        with closing(self._db()) as db:
+            db.execute(
+                "INSERT INTO collaborations (id, creator_id, status, terms_json, code, link, "
+                "content_due, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (kid, cid, "agreed", json.dumps(terms, ensure_ascii=False), code, link,
+                 content_due, now, now))
+            db.commit()
+        self.set_status(cid, "collaborating")
+        return kid
+
+    def update_collaboration(self, kid: str, **fields) -> None:
+        allowed = {"status", "code", "link", "shipped_on", "content_due", "post_urls",
+                   "labelled_as_ad", "notes"}
+        bad = set(fields) - allowed
+        if bad:
+            raise ValueError(f"unknown field(s): {', '.join(sorted(bad))}")
+        if "status" in fields and fields["status"] not in COLLAB_STATUSES:
+            raise ValueError(f"unknown collaboration status {fields['status']!r}")
+        if not fields:
+            return
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        with closing(self._db()) as db:
+            cur = db.execute(f"UPDATE collaborations SET {sets}, updated_at = ? WHERE id = ?",
+                             (*fields.values(), _now(), kid))
+            db.commit()
+            if cur.rowcount != 1:
+                raise KeyError(kid)
+
+    def collaborations(self, status: str = "") -> list[dict]:
+        sql, args = "SELECT * FROM collaborations", ()
+        if status:
+            sql, args = sql + " WHERE status = ?", (status,)
+        with closing(self._db()) as db:
+            rows = [dict(r) for r in db.execute(sql + " ORDER BY created_at", args)]
+        for r in rows:
+            r["terms"] = json.loads(r.pop("terms_json") or "{}")
+        return rows
 
     # ── Results ──
 

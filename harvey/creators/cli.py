@@ -14,7 +14,8 @@ import sys
 from harvey.creators.store import CreatorStore
 
 ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "propose", "proposals",
-           "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "link",
+           "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo",
+           "followup", "reply", "collab", "collab-set", "collabs", "link",
            "report", "queries", "purge")
 
 
@@ -29,6 +30,12 @@ def add_parser(subparsers) -> None:
                      help="draft: print the checked draft as JSON for the Gmail connector")
     sub.add_argument("--ref", default="", help="mark-drafted: the Gmail draft id from the connector")
     sub.add_argument("--month", default="", help="link/report: YYYY-MM")
+    sub.add_argument("--text", default="", help="reply: her message (or --text-file)")
+    sub.add_argument("--text-file", default="", help="reply: file with her message")
+    sub.add_argument("--message-id", default="", help="reply: her Gmail message id, to answer in the thread")
+    sub.add_argument("--terms", default="", help='collab: what was agreed, e.g. "1 vestido 45 EUR; 10%% comision"')
+    sub.add_argument("--due", default="", help="collab: date the content is due, YYYY-MM-DD")
+    sub.add_argument("fields", nargs="*", default=[], help="collab-set: field=value ...")
     sub.add_argument("--path", default="", help="link: landing path, e.g. collections/vestidos")
     sub.add_argument("--db", default="", help=argparse.SUPPRESS)
     sub.set_defaults(func=cmd_creators)
@@ -213,6 +220,99 @@ def cmd_creators(args) -> None:
         print(f"\n  {pid}: marcada como borrador en Gmail. Envíala tú cuando quieras.\n")
         return
 
+    if action == "sent":
+        pid = _need(args, "el id de la propuesta")
+        store.mark_sent(pid)
+        print(f"\n  {pid}: enviada (por ti, desde Gmail). Harvey te avisará si toca seguimiento.\n")
+        return
+
+    if action == "todo":
+        from harvey.creators.followups import due_actions
+        actions = due_actions(store)
+        if not actions:
+            print("\n  Nada pendiente hoy.\n")
+            return
+        print(f"\n  {len(actions)} tareas pendientes (de más a menos urgente):\n")
+        for a in actions:
+            print(f"  [{a['priority']}] {a['who']}: {a['what']}\n      → {a['how']}")
+        print()
+        return
+
+    if action == "followup":
+        cid = _need(args, "el id de la creadora")
+        row = store.get(cid)
+        if not row or row["status"] != "contacted":
+            sys.exit("  Solo se prepara un recordatorio a quien recibió el primer mensaje y no respondió.")
+        items = [p for p in store.list_proposals() if p["creator_id"] == cid]
+        if any(p.get("kind") == "followup" for p in items):
+            sys.exit("  Ya tiene un recordatorio: no se escribe más de una vez.")
+        first = [p for p in items if p.get("kind", "first") == "first" and p["status"] == "sent"]
+        if not first:
+            sys.exit("  No consta ningún primer mensaje enviado (harvey creators sent <id>).")
+        config = _config()
+
+        async def _write():
+            from harvey.creators.proposals import write_followup
+            return await write_followup(await _brain(config), row["creator"], config,
+                                        first[-1]["subject"])
+        language, subject, body, issues = asyncio.run(_write())
+        pid = store.add_proposal(cid, language, subject, body, issues, kind="followup")
+        _show_new(pid, language, subject, body, issues)
+        return
+
+    if action == "reply":
+        cid = _need(args, "el id de la creadora")
+        text = args.text
+        if args.text_file:
+            with open(args.text_file, encoding="utf-8") as f:
+                text = f.read()
+        if not text.strip():
+            sys.exit("  Falta su mensaje (--text o --text-file).")
+        config = _config()
+
+        async def _handle():
+            from harvey.creators.followups import handle_reply
+            return await handle_reply(store, cid, text, await _brain(config), config,
+                                      message_id=args.message_id)
+        result = asyncio.run(_handle())
+        if result["outcome"] == "opt_out":
+            print(f"\n  Baja: {result['why']} Sus datos se han borrado. No respondas salvo para "
+                  "confirmarla si quieres.\n")
+        elif result["outcome"] in ("escalate", "ignored"):
+            print(f"\n  Sin respuesta automática: {result['why']}.\n")
+        else:
+            _show_new(result["proposal_id"], "", result["subject"], result["body"], result["issues"])
+        return
+
+    if action == "collab":
+        cid = _need(args, "el id de la creadora")
+        if not args.terms:
+            sys.exit('  Indica lo acordado: --terms "1 vestido (45 EUR); 10% comisión"')
+        kid = store.add_collaboration(cid, {"acordado": args.terms}, content_due=args.due)
+        print(f"\n  Colaboración {kid} registrada. Siguiente: harvey creators link {cid} --path ...\n")
+        return
+
+    if action == "collab-set":
+        kid = _need(args, "el id de la colaboración")
+        fields = {}
+        for item in args.fields:
+            if "=" not in item:
+                sys.exit(f"  '{item}' no es campo=valor")
+            key, value = item.split("=", 1)
+            fields[key] = int(value) if key == "labelled_as_ad" else value
+        store.update_collaboration(kid, **fields)
+        print(f"\n  {kid} actualizada.\n")
+        return
+
+    if action == "collabs":
+        for k in store.collaborations(args.status):
+            row = store.get(k["creator_id"])
+            label = {None: "sin comprobar", 0: "NO", 1: "sí"}.get(k["labelled_as_ad"], "?")
+            print(f"  [{k['id']}] @{row['handle'] if row else k['creator_id']} · {k['status']} · "
+                  f"{k['terms'].get('acordado', '')} · publicidad etiquetada: {label}")
+        print()
+        return
+
     if action == "link":
         from harvey.creators.tracking import campaign_name, proposed_code, utm_link
         row = store.get(_need(args, "el id de la creadora"))
@@ -246,6 +346,24 @@ def cmd_creators(args) -> None:
     if action == "purge":
         n = store.purge_stale_candidates()
         print(f"\n  {n} candidatas antiguas sin aprobar borradas.\n")
+
+
+async def _brain(config):
+    from harvey.brain import Brain
+    from harvey.state import StateManager
+    state = StateManager()
+    await state.init_db()
+    return Brain(state, config.brain)
+
+
+def _show_new(pid, language, subject, body, issues) -> None:
+    print(f"\n  Propuesta {pid} {('(' + language + ') ') if language else ''}pendiente de tu revisión.\n")
+    print(f"  Asunto: {subject}\n\n" + "\n".join("  " + line for line in body.splitlines()))
+    if issues:
+        print("\n  ✗ No se puede aprobar tal cual:")
+        for i in issues:
+            print(f"    - {i}")
+    print()
 
 
 def _this_month() -> str:

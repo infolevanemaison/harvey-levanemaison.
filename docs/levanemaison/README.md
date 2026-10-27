@@ -14,9 +14,22 @@ humana**. Harvey prepara, propone y mide; una persona decide y envía.
 | 1 | Auditoría del código y plan | Hecha |
 | 2 | Idioma ES/FR, bajas, filtro, geografía, configuración y pruebas | Hecha (rama `levanemaison/fase2-es-fr`, sin fusionar) |
 | 3 | Gmail solo borradores + módulo de creadoras + medición | **Hecha en la rama `levanemaison/fase3-borradores`** (sin fusionar) |
-| 4 | Búsqueda de creadoras por APIs oficiales (YouTube, Instagram Business Discovery) | Pendiente; hoy la lista se rellena a mano |
+| 4 | Auditoría de tienda (`harvey shop audit`), cambios recomendados, seguimiento de colaboraciones y respuestas | **Hecha en la rama `levanemaison/fase4-auditoria`** (sin fusionar). Falta la revisión visual (dominio bloqueado) |
+| 4b | Búsqueda de creadoras por APIs oficiales (YouTube, Instagram Business Discovery) | Pendiente; hoy la lista se rellena a mano |
 | 5 | Informe semanal automático desde Shopify | Consultas listas; falta programarlo (requiere tu autorización) |
 | 6 | Boutiques (mayorista o depósito), solo si los márgenes lo permiten | En espera |
+
+## Qué añade la fase 4
+
+- `harvey shop audit productos.json`: auditoría de catálogo de solo lectura
+  (fotos, stock, precios tachados, nicho, tejidos, opciones sin traducir,
+  afirmaciones reguladas, envío) a partir de la consulta `harvey shop query`
+  ejecutada con el conector de Shopify.
+- [`cambios-tienda.md`](cambios-tienda.md): textos y estructuras listos para
+  aplicar (aviso legal, envíos, devoluciones, menú, portada, fichas, checkout).
+- Creadoras: `todo` (tareas del día), `sent`, un único `followup`, `reply`
+  con bajas y temas legales resueltos por reglas, y colaboraciones con
+  control del etiquetado de publicidad.
 
 ## Qué añade la fase 3
 

@@ -452,3 +452,127 @@ def test_export_and_reimport_keep_opt_outs_and_approvals(tmp_path):
     fresh.import_csv(out)
     by_handle = {r["handle"]: r["status"] for r in fresh.list_creators()}
     assert by_handle == {"aprobada": "approved", "de_baja": "opted_out"}
+
+
+# ── Follow-ups, replies and collaborations ──
+
+from datetime import date, timedelta  # noqa: E402
+
+from harvey.creators.followups import classify_reply, due_actions, handle_reply  # noqa: E402
+
+
+def _contacted(tmp_path, days_ago=8):
+    store, cid, pid = _ready(tmp_path)
+    from harvey.creators.drafts import mark_drafted
+    mark_drafted(store, ready_draft(store, pid, config()), "draft:x")
+    store.mark_sent(pid, on=(date.today() - timedelta(days=days_ago)).isoformat())
+    return store, cid, pid
+
+
+def test_sent_is_only_for_a_draft_and_marks_her_contacted(tmp_path):
+    store, cid, pid = _ready(tmp_path)
+    with pytest.raises(ValueError):
+        store.mark_sent(pid)                      # approved, not yet a Gmail draft
+    store2, cid2, pid2 = _contacted(tmp_path / "b")
+    assert store2.get(cid2)["status"] == "contacted"
+    assert store2.get_proposal(pid2)["status"] == "sent"
+
+
+def test_one_reminder_after_a_week_then_close(tmp_path):
+    store, cid, _ = _contacted(tmp_path, days_ago=8)
+    todo = due_actions(store)
+    assert any(a["how"] == f"harvey creators followup {cid}" for a in todo)
+
+    store.add_proposal(cid, "es", "una idea", "Recordatorio.\n\nPie.", [], kind="followup")
+    assert not any("followup" in a["how"] for a in due_actions(store))
+    late = due_actions(store, today=date.today() + timedelta(days=30))
+    assert not any("reject" in a["how"] for a in late)  # reminder not sent yet
+    for p in store.list_proposals():
+        if p["kind"] == "followup":
+            store.set_proposal_status(p["id"], "sent")
+    late = due_actions(store, today=date.today() + timedelta(days=30))
+    assert any(a["how"] == f"harvey creators reject {cid}" for a in late)
+
+
+def test_nothing_is_due_too_early(tmp_path):
+    store, _, _ = _contacted(tmp_path, days_ago=2)
+    assert not any("followup" in a["how"] for a in due_actions(store))
+
+
+@pytest.mark.parametrize("text,outcome", [
+    ("Gracias, pero no me interesa. Darme de baja, por favor.", "opt_out"),
+    ("Non merci.", "opt_out"),
+    ("Voy a poner una denuncia ante la AEPD.", "escalate"),
+    ("¡Me encanta! ¿Qué tallas tenéis?", "answer"),
+])
+def test_replies_are_classified_by_rules(text, outcome):
+    assert classify_reply(text)[0] == outcome
+
+
+@pytest.mark.asyncio
+async def test_an_opt_out_reply_erases_her_without_a_model_call(tmp_path):
+    store, cid, _ = _contacted(tmp_path)
+    brain = ProposalBrain({"subject": "x", "body": "y"})
+    result = await handle_reply(store, cid, "Por favor, dadme de baja.", brain, config())
+    assert result["outcome"] == "opt_out" and brain.prompts == []
+    assert store.get(cid)["status"] == "opted_out" and store.list_proposals() == []
+
+
+@pytest.mark.asyncio
+async def test_a_reply_gets_a_suggestion_that_waits_for_approval(tmp_path):
+    store, cid, _ = _contacted(tmp_path)
+    brain = ProposalBrain({"subject": "Re: una idea",
+                           "body": "Hola Carmen, gracias por responder. Te cuento la idea con calma."})
+    result = await handle_reply(store, cid, "Hola, ¿qué tenías en mente?", brain, config(),
+                                message_id="m-123")
+    assert result["outcome"] == "answer" and result["issues"] == []
+    p = store.get_proposal(result["proposal_id"])
+    assert (p["kind"], p["status"], p["reply_to"]) == ("reply", "pending_review", "m-123")
+    assert store.get(cid)["status"] == "replied"
+    assert "creator reply" in brain.prompts[0]          # her text is fenced
+    store.set_proposal_status(p["id"], "approved")
+    draft = ready_draft(store, p["id"], config())
+    assert draft["reply_to_message_id"] == "m-123" and draft["kind"] == "reply"
+    assert store.get(cid)["status"] == "replied"
+
+
+@pytest.mark.asyncio
+async def test_a_reply_asking_for_money_cannot_promise_unapproved_terms(tmp_path):
+    store, cid, _ = _contacted(tmp_path)
+    brain = ProposalBrain({"subject": "Re", "body": "Claro, te pagamos 200 euros y un regalo."})
+    result = await handle_reply(store, cid, "¿Cuánto pagáis?", brain, config())
+    assert result["issues"]
+
+
+def test_followups_need_her_to_be_contacted(tmp_path):
+    store, cid, pid = _ready(tmp_path)
+    fid = store.add_proposal(cid, "es", "hola", "Recordatorio breve.\n\nPie.", [], kind="followup")
+    store.set_proposal_status(fid, "approved")
+    with pytest.raises(DraftRefused, match="followup needs"):
+        ready_draft(store, fid, config())
+
+
+def test_collaboration_lifecycle_and_ad_labelling_reminder(tmp_path):
+    store, cid, _ = _contacted(tmp_path)
+    kid = store.add_collaboration(cid, {"acordado": "1 vestido"},
+                                  content_due=(date.today() - timedelta(days=1)).isoformat())
+    assert store.get(cid)["status"] == "collaborating"
+    store.update_collaboration(kid, status="shipped", shipped_on=date.today().isoformat())
+    assert any("debía salir" in a["what"] for a in due_actions(store))
+    store.update_collaboration(kid, status="published", post_urls="https://social.example/p/1")
+    assert any("etiquetada como publicidad" in a["what"] for a in due_actions(store))
+    store.update_collaboration(kid, labelled_as_ad=0)
+    assert due_actions(store)[0]["what"].startswith("Publicación SIN etiquetar")
+    with pytest.raises(ValueError):
+        store.update_collaboration(kid, status="viral")
+    with pytest.raises(ValueError):
+        store.update_collaboration(kid, price=10)
+    store.forget(cid)
+    assert store.collaborations() == []
+
+
+def test_no_collaboration_with_someone_who_opted_out(tmp_path):
+    store, cid, _ = _ready(tmp_path)
+    store.set_status(cid, "opted_out")
+    with pytest.raises(ValueError):
+        store.add_collaboration(cid, {"acordado": "x"})

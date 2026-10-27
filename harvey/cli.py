@@ -1111,6 +1111,8 @@ def main():
     # harvey usage
     from harvey.creators.cli import add_parser as add_creators_parser
     add_creators_parser(subparsers)
+    from harvey.shopaudit import add_parser as add_shop_parser
+    add_shop_parser(subparsers)
 
     sub = subparsers.add_parser("usage", help="Show brain usage and quota (Claude or Codex)")
     sub.add_argument("--days", type=int, default=30, help="Breakdown window (default: 30)")

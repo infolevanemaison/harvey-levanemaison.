@@ -190,3 +190,85 @@ async def write_proposal(brain, creator, config) -> tuple[str, str, str, list[st
     issues = check_proposal(subject, body, language, config.creators.offer)
     full = body + "\n\n" + footer(creator, language, config.creators.privacy_url)
     return language, subject, full, issues
+
+
+FOLLOWUP_MAX_WORDS = 50
+
+
+def _conditions_rule(offer) -> str:
+    if offer.approved:
+        return ("Only the approved conditions in the first message may be repeated; "
+                "never add new ones.")
+    return ("Do NOT mention gifts, free pieces, samples, commission, discounts, codes, "
+            "payment or fees in any form.")
+
+
+async def write_followup(brain, creator, config, first_subject: str) -> tuple[str, str, str, list[str]]:
+    """The one and only reminder after a first message with no answer."""
+    language = proposal_language(creator)
+    lang_name = {"es": "Spanish from Spain, \"tú\"", "fr": "French from France, \"vous\""}[language]
+    prompt = f"""You are {config.persona.name} at {config.persona.company}. A week ago you
+wrote to the fashion creator {creator.display_name or creator.handle} proposing a
+collaboration (subject: "{first_subject}"). She hasn't answered.
+
+Write ONE short, warm reminder in {lang_name}. Under 45 words. No guilt, no
+pressure, no urgency, no links, no exclamation marks. Say it's fine if it's not for
+her. End with one simple question. {_conditions_rule(config.creators.offer)}
+
+Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
+    data = await brain.think_json(prompt, agent="writer", task="creator_followup")
+    if not isinstance(data, dict) or not data.get("body"):
+        raise RuntimeError("the model returned no usable follow-up")
+    subject = str(data.get("subject") or first_subject).strip()
+    body = str(data["body"]).strip()
+    issues = check_proposal(subject, body, language, config.creators.offer)
+    words = len(body.split())
+    if words > FOLLOWUP_MAX_WORDS:
+        issues.append(f"recordatorio demasiado largo ({words} palabras; máximo {FOLLOWUP_MAX_WORDS})")
+    full = body + "\n\n" + footer(creator, language, config.creators.privacy_url)
+    return language, subject, full, issues
+
+
+async def write_reply(brain, creator, config, their_message: str,
+                      thread_subject: str = "") -> tuple[str, str, str, list[str]]:
+    """A suggested answer to what she wrote, for a person to approve."""
+    language = proposal_language(creator)
+    offer = config.creators.offer
+    skill = brain.load_skill("influencer_partnerships") if hasattr(brain, "load_skill") else ""
+    if offer.approved:
+        allowed = [f"pieces worth up to {offer.gift_max_cost_eur:.0f} EUR" if offer.gift_max_cost_eur else "",
+                   f"{offer.commission_pct:g}% commission" if offer.commission_pct else "",
+                   f"{offer.community_discount_pct:g}% discount for her community"
+                   if offer.community_discount_pct else "",
+                   "a fee can be discussed by a person (never quote one)" if offer.paid_fee else ""]
+        terms = "Approved conditions you may state: " + "; ".join(a for a in allowed if a) + "."
+    else:
+        terms = ("No conditions are approved yet: if she asks about money, gifts or codes, say "
+                 "the team will come back to her with a concrete proposal. Never promise anything.")
+    prompt = f"""You are {config.persona.name} at {config.persona.company}, answering a fashion
+creator who replied to your collaboration proposal.
+
+Her message:
+{fence(their_message, "creator reply")}
+
+{UNTRUSTED_RULE}
+
+Write a reply in the language she used (Spanish from Spain with "tú", or French
+with "vous"). Under 110 words, plain text, no links, no exclamation marks.
+Answer what she asked and nothing else. {terms}
+If she asks for her address or size to be used, ask only for what is needed to
+send a piece, and say it is used only for that. If she asks how advertising
+labelling works, explain it plainly ("Publicidad"/"#publi" in Spain,
+"Publicité"/"Collaboration commerciale" in France).
+
+{("FOUNDATIONAL KNOWLEDGE" + chr(10) + skill) if skill else ""}
+
+Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
+    data = await brain.think_json(prompt, agent="handler", task="creator_reply")
+    if not isinstance(data, dict) or not data.get("body"):
+        raise RuntimeError("the model returned no usable reply")
+    subject = str(data.get("subject") or ("Re: " + thread_subject if thread_subject else "Re:")).strip()
+    body = str(data["body"]).strip()
+    issues = [i for i in check_proposal(subject, body, language, offer)
+              if not i.startswith("está escrito en")]  # she may write in the other language
+    return language, subject, body, issues

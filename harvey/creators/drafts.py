@@ -12,6 +12,14 @@ from harvey.gate import do_not_contact_match
 from harvey.creators.proposals import check_proposal
 
 
+# Where a creator must be for each kind of message to be drafted.
+ALLOWED_STATUS = {
+    "first": ("approved", "drafted"),
+    "followup": ("contacted",),
+    "reply": ("replied", "negotiating", "collaborating", "contacted"),
+}
+
+
 class DraftRefused(RuntimeError):
     """Why this proposal may not become a draft."""
 
@@ -32,9 +40,14 @@ def ready_draft(store, proposal_id: str, config) -> dict:
         raise DraftRefused("its creator no longer exists")
     if row["status"] in ("opted_out", "rejected"):
         raise DraftRefused(f"the creator is {row['status']}")
-    if row["status"] not in ("approved", "drafted"):
-        raise DraftRefused("the creator hasn't been approved for contact "
-                           "(harvey creators approve)")
+    kind = proposal.get("kind") or "first"
+    allowed = ALLOWED_STATUS[kind]
+    if row["status"] not in allowed:
+        if kind == "first":
+            raise DraftRefused("the creator hasn't been approved for contact "
+                               "(harvey creators approve)")
+        raise DraftRefused(f"a {kind} needs the creator to be {' or '.join(allowed)}, "
+                           f"she is {row['status']}")
     creator = row["creator"]
     if not creator.pro_contact_email or not creator.pro_contact_source:
         raise DraftRefused("she doesn't publish a professional contact: write only "
@@ -43,15 +56,21 @@ def ready_draft(store, proposal_id: str, config) -> dict:
     if blocked:
         raise DraftRefused(f"{creator.pro_contact_email} is on the do-not-contact list")
     # The text may have been approved under older conditions: check again now.
+    # First messages and reminders end with the footer, which isn't checked.
     body = proposal["body"].split("\n\n")
-    own_words = "\n\n".join(body[:-1]) if len(body) > 1 else proposal["body"]
+    own_words = ("\n\n".join(body[:-1]) if kind != "reply" and len(body) > 1
+                 else proposal["body"])
     issues = check_proposal(proposal["subject"], own_words, proposal["language"],
                             config.creators.offer)
+    if kind == "reply":
+        issues = [i for i in issues if not i.startswith("está escrito en")]
     if issues:
         raise DraftRefused("the text no longer passes the checks: " + "; ".join(issues))
     return {"to": creator.pro_contact_email, "subject": proposal["subject"],
             "body": proposal["body"], "proposal_id": proposal_id,
-            "creator_id": proposal["creator_id"]}
+            "creator_id": proposal["creator_id"], "kind": kind,
+            # For the Gmail connector: answer inside her thread.
+            "reply_to_message_id": proposal.get("reply_to") or ""}
 
 
 async def create_gmail_draft(store, proposal_id: str, config, provider) -> str:
@@ -66,4 +85,5 @@ async def create_gmail_draft(store, proposal_id: str, config, provider) -> str:
 
 def mark_drafted(store, draft: dict, ref: str) -> None:
     store.set_proposal_status(draft["proposal_id"], "drafted", draft_ref=ref or "connector")
-    store.set_status(draft["creator_id"], "drafted")
+    if draft.get("kind", "first") == "first":
+        store.set_status(draft["creator_id"], "drafted")

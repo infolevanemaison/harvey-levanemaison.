@@ -32,6 +32,25 @@ Ese archivo no se sube a GitHub. Completa con Claude los campos `COMPLETAR`
 | 6 | «Crea el borrador en Gmail» | Borrador en tu Gmail, nunca se envía | — |
 | 7 | Abres Gmail en el iPhone → Borradores → revisas → **Enviar** | El único envío real | **Tú** |
 | 8 | «Ha respondido así: …» | Claude propone una respuesta en borrador | Tú envías |
+| 9 | «Ya lo he enviado» | `harvey creators sent <id>`: desde aquí cuentan los plazos | Tú |
+| 10 | «¿Qué tengo pendiente?» | `harvey creators todo`: recordatorios, respuestas, envíos de prendas, etiquetado | Tú decides |
+
+**Respuestas:** pega su mensaje («Ha respondido esto: …»). Claude ejecuta
+`harvey creators reply <id> --text "…"`:
+- si pide la baja, sus datos se borran al momento y no se le contesta;
+- si menciona abogados, denuncias, AEPD o CNIL, no se sugiere respuesta: la
+  atiendes tú;
+- en otro caso se prepara una respuesta en su idioma que espera tu aprobación
+  y, aprobada, va como borrador **dentro del mismo hilo** de Gmail.
+
+**Recordatorio:** como máximo uno, a los 7 días sin respuesta
+(`harvey creators followup <id>`). A los 21 días se propone cerrarla, sin
+volver a escribir.
+
+**Colaboraciones acordadas:** `harvey creators collab <id> --terms "…" --due AAAA-MM-DD`
+y después `collab-set <id> status=shipped shipped_on=…`,
+`post_urls=… status=published` y `labelled_as_ad=1`. `todo` avisa si la
+publicación se retrasa o no está etiquetada como publicidad.
 
 Si una creadora dice «baja», «no me escribas» o «stop», o lo pide de
 cualquier otra forma: «@usuario se da de baja». Claude ejecuta
