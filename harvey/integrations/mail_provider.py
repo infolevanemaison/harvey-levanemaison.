@@ -133,6 +133,21 @@ class MailProvider(ABC):
     ) -> SendResult:
         """Send one plain-text email. Reply threading when refs are given."""
 
+    async def create_draft(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        thread_ref: str = "",
+        in_reply_to: str = "",
+    ) -> SendResult:
+        """Save one plain-text email as a draft in the mailbox, unsent.
+
+        Only providers that can hold a draft for a person to send implement
+        it (Gmail); the rest refuse, so draft-only mode never falls back to
+        sending."""
+        return SendResult(ok=False, error=f"{self.name} cannot create drafts")
+
     @abstractmethod
     async def get_replies(self, limit: int = 50) -> list[InboundMessage]:
         """Fetch recent inbound messages (dedup is the caller's job)."""

@@ -29,3 +29,10 @@ def test_template_has_no_secrets():
     text = TEMPLATE.read_text(encoding="utf-8").lower()
     for word in ("api_key:", "password:", "secret:", "token:"):
         assert word not in text
+
+
+def test_template_only_drafts_and_offers_nothing_until_approved():
+    cfg = load_config(str(TEMPLATE))
+    assert cfg.channels.email.draft_only is True
+    assert cfg.creators.offer.approved is False
+    assert cfg.creators.countries == ["ES", "FR"]

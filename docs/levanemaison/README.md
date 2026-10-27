@@ -12,11 +12,29 @@ humana**. Harvey prepara, propone y mide; una persona decide y envía.
 | Fase | Contenido | Estado |
 |---|---|---|
 | 1 | Auditoría del código y plan | Hecha |
-| 2 | Idioma ES/FR, bajas, filtro, geografía, configuración y pruebas | **Hecha en la rama `levanemaison/fase2-es-fr`** (sin fusionar) |
-| 3 | Modo "solo borradores" en Gmail | Pendiente |
-| 4 | Módulo de creadoras (búsqueda, ficha, puntuación, seguimiento) | Diseñado en [`modulo-influencers.md`](modulo-influencers.md) |
-| 5 | Medición: códigos, UTM, informe semanal desde Shopify | Pendiente |
+| 2 | Idioma ES/FR, bajas, filtro, geografía, configuración y pruebas | Hecha (rama `levanemaison/fase2-es-fr`, sin fusionar) |
+| 3 | Gmail solo borradores + módulo de creadoras + medición | **Hecha en la rama `levanemaison/fase3-borradores`** (sin fusionar) |
+| 4 | Búsqueda de creadoras por APIs oficiales (YouTube, Instagram Business Discovery) | Pendiente; hoy la lista se rellena a mano |
+| 5 | Informe semanal automático desde Shopify | Consultas listas; falta programarlo (requiere tu autorización) |
 | 6 | Boutiques (mayorista o depósito), solo si los márgenes lo permiten | En espera |
+
+## Qué añade la fase 3
+
+- **Gmail solo borradores** (`channels.email.draft_only: true`): aprobar un
+  correo lo guarda como borrador en tu Gmail. El proveedor de Gmail se niega
+  a enviar mientras el modo esté activo, aunque otra parte del código lo
+  intentara.
+- **Módulo de creadoras** (`harvey/creators/`, comando `harvey creators`):
+  importación desde CSV, puntuación explicable (audiencia, interacción,
+  autenticidad, coste), aprobación humana, propuestas en español o francés
+  revisadas por código, borrador en Gmail, exportación para no perder datos
+  entre sesiones y borrado a petición.
+- **Condiciones bloqueadas**: sin tu aprobación (`creators.offer.approved`),
+  ninguna propuesta puede mencionar regalos, comisiones, descuentos, códigos
+  ni pagos.
+- **Medición**: enlaces UTM, códigos propuestos, consultas ShopifyQL de solo
+  lectura e informe de rentabilidad por creadora. Ver [`medicion.md`](medicion.md).
+- **Uso desde el iPhone**: [`flujo-iphone.md`](flujo-iphone.md).
 
 ## Qué cambió en la fase 2
 
@@ -55,8 +73,9 @@ No necesitas ordenador. Todo pasa por tres apps:
    el código, ejecuta las pruebas y sube los cambios a una rama.
 2. **App de GitHub**: revisa la rama, los archivos cambiados y, cuando lo
    pidas, el pull request. Fusionar es siempre decisión tuya.
-3. **App de Gmail**: cuando exista el modo borradores (fase 3), los mensajes
-   aparecerán en *Borradores*; los lees, los editas y los envías tú.
+3. **App de Gmail**: los mensajes aparecen en *Borradores*; los lees, los
+   editas y los envías tú. Claude los crea con el conector de Gmail, sin
+   necesidad de credenciales en el repositorio.
 
 ### Claves y contraseñas
 

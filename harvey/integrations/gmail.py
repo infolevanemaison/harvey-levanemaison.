@@ -25,6 +25,7 @@ from email.utils import parseaddr
 
 import httpx
 
+from harvey.config import draft_only
 from harvey.paths import PROJECT_ROOT
 from harvey.integrations.mail_provider import (
     InboundMessage,
@@ -206,14 +207,8 @@ class GmailProvider(MailProvider):
                 raise RuntimeError("Gmail send returned an unreadable response") from e
             return None
 
-    async def send_email(
-        self,
-        to_email: str,
-        subject: str,
-        body: str,
-        thread_ref: str = "",
-        in_reply_to: str = "",
-    ) -> SendResult:
+    def _raw_message(self, to_email: str, subject: str, body: str,
+                     thread_ref: str = "", in_reply_to: str = "") -> dict:
         msg = EmailMessage()
         persona = self.config.persona
         msg["To"] = to_email
@@ -228,6 +223,41 @@ class GmailProvider(MailProvider):
         payload: dict = {"raw": raw}
         if thread_ref:
             payload["threadId"] = thread_ref
+        return payload
+
+    async def create_draft(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        thread_ref: str = "",
+        in_reply_to: str = "",
+    ) -> SendResult:
+        """Save the email in Gmail's Drafts. Nothing is sent: the person
+        opens it in Gmail, checks it and sends it themselves."""
+        message = self._raw_message(to_email, subject, body, thread_ref, in_reply_to)
+        data = await self._request("POST", "/drafts", json={"message": message})
+        if not isinstance(data, dict) or not isinstance(data.get("id"), str) or not data["id"]:
+            return SendResult(ok=False, error="gmail draft failed")
+        message_info = data.get("message") if isinstance(data.get("message"), dict) else {}
+        thread = message_info.get("threadId", "")
+        return SendResult(ok=True, message_id=f"draft:{data['id']}",
+                          thread_ref=thread if isinstance(thread, str) else "")
+
+    async def send_email(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        thread_ref: str = "",
+        in_reply_to: str = "",
+    ) -> SendResult:
+        if draft_only(self.config):
+            # Defence in depth: the sender drafts in this mode, but no code
+            # path may send while it is on.
+            logger.error("Gmail: refused to send in draft-only mode")
+            return SendResult(ok=False, error="draft-only mode: Harvey never sends")
+        payload = self._raw_message(to_email, subject, body, thread_ref, in_reply_to)
 
         data = await self._request("POST", "/messages/send", sending=True, json=payload)
         if data is None:

@@ -71,6 +71,8 @@ channels:
     send_to_risky: false
     max_bounce_rate: 0.03
     link_domains: ["levanemaison.com"]
+    # Aprobar un correo crea un BORRADOR en tu Gmail; Harvey nunca envía.
+    draft_only: true
   linkedin:
     enabled: false              # no automatizar LinkedIn (sus condiciones lo prohíben)
 
@@ -98,3 +100,24 @@ compliance:
   do_not_contact: []
   precleared:
     enabled: false              # solo admite remitentes de GB o US
+
+# Módulo de creadoras (harvey creators ...). Ver docs/levanemaison/.
+creators:
+  countries: ["ES", "FR"]
+  min_followers: 2000
+  max_followers: 150000
+  landing_base_url: "https://levanemaison.com"
+  privacy_url: "https://levanemaison.com/policies/privacy-policy"
+  code_prefix: "LVM"
+  offer:
+    # Mientras approved sea false, las propuestas NO pueden mencionar
+    # regalos, comisiones, descuentos, códigos ni pagos (lo bloquea el código).
+    approved: false
+    gift_max_cost_eur: 0
+    commission_pct: 0
+    community_discount_pct: 0
+    paid_fee: false
+  economics:
+    gross_margin_pct: 0          # COMPLETAR: tu margen bruto real, en %
+    avg_order_value_eur: 0
+    shipping_cost_per_gift_eur: 0

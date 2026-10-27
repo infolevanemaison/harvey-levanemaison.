@@ -1,0 +1,67 @@
+# Flujo de trabajo desde el iPhone
+
+Todo se hace hablando con Claude en la app de Claude (pestaña Code, sobre
+este repositorio) y revisando el resultado en Gmail. Harvey **no envía
+nada**: cada mensaje acaba como borrador en tu Gmail y lo envías tú.
+
+## Una vez: preparar la sesión
+
+Pídele a Claude:
+
+> Activa la configuración de Levanemaison.
+
+Claude ejecuta `cp levanemaison/harvey.levanemaison.example.yaml harvey.local.yaml`.
+Ese archivo no se sube a GitHub. Completa con Claude los campos `COMPLETAR`
+(tu nombre, la razón social y la dirección para el pie de los mensajes, y tu margen).
+
+> **Importante:** el contenedor de Claude Code se borra al cerrar la sesión.
+> La lista de creadoras (`data/creators.db`) vive en el contenedor y **no se
+> sube a GitHub** porque contiene datos personales. Para no perderla, pide al
+> final de cada sesión «exporta las creadoras a un CSV» y guárdalo en tu
+> iCloud o Drive, o vuelve a importar tu CSV al empezar la siguiente.
+
+## Cada ronda de creadoras
+
+| Paso | Qué dices a Claude | Qué pasa | Quién decide |
+|---|---|---|---|
+| 1 | «Importa este CSV de creadoras» (lo adjuntas o pegas) | `harvey creators import` puntúa a cada una | — |
+| 2 | «Enséñame la lista» | Puntuación /100 con motivos y alertas | Tú lees |
+| 3 | «Apruebo a @usuario» | `harvey creators approve <id>` | **Tú** |
+| 4 | «Redacta una propuesta para @usuario» | Propuesta en su idioma, revisada por el código | — |
+| 5 | «Apruebo la propuesta» o «cámbiala así…» | `approve-proposal` | **Tú** |
+| 6 | «Crea el borrador en Gmail» | Borrador en tu Gmail, nunca se envía | — |
+| 7 | Abres Gmail en el iPhone → Borradores → revisas → **Enviar** | El único envío real | **Tú** |
+| 8 | «Ha respondido así: …» | Claude propone una respuesta en borrador | Tú envías |
+
+Si una creadora dice «baja», «no me escribas» o «stop», o lo pide de
+cualquier otra forma: «@usuario se da de baja». Claude ejecuta
+`harvey creators forget <id>`, que borra sus datos y la deja marcada para no
+volver a añadirla.
+
+## Qué rellenar en el CSV (solo datos públicos o que ella te dé)
+
+`handle, platform, display_name, country, language, profile_url, followers,
+avg_likes, avg_comments, avg_views, posts_last_30d, sponsored_posts_last_30d,
+follower_growth_30d_pct, audience_female_pct, audience_35_65_pct,
+audience_target_country_pct, comment_quality (1-5), content_notes,
+pro_contact_email, pro_contact_source, quoted_fee_eur`
+
+- **Interacción:** media de likes y comentarios de sus últimas 9 a 12
+  publicaciones, contada a mano en su perfil.
+- **Audiencia (sexo, edad, país):** solo si ella te da su media kit o
+  capturas de sus estadísticas. Si no, déjalo vacío: Harvey lo marcará como
+  pendiente en vez de inventarlo.
+- **Contacto:** solo el email profesional que ella publica para
+  colaboraciones, y la URL donde aparece. Sin eso, Harvey no prepara email.
+- Ejemplo con datos ficticios: `levanemaison/creadoras_ejemplo_ficticias.csv`.
+
+## Condiciones (regalo, comisión, descuento)
+
+Mientras `creators.offer.approved` sea `false`, el código **bloquea**
+cualquier propuesta que mencione regalos, prendas gratis, comisiones,
+descuentos, códigos o pagos, en español, francés o inglés. Cuando decidas
+las condiciones, dile a Claude:
+
+> Apruebo estas condiciones: prenda de hasta X €, comisión del Y %, descuento del Z %.
+
+A partir de ahí, las propuestas solo podrán usar esas cifras exactas.
