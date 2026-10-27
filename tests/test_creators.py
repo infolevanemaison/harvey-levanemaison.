@@ -606,3 +606,24 @@ async def test_inbox_opt_out_is_applied(tmp_path):
     result = await process_inbox(store, [{"from": "colabora@estilo.example", "subject": "Re",
                                           "body": "Non merci.", "message_id": "m-9"}], brain, config())
     assert result[0]["outcome"] == "opt_out" and store.get(cid)["status"] == "opted_out"
+
+
+def test_digest_summarises_status_actions_and_results(tmp_path):
+    from harvey.creators.followups import digest
+    store, cid, _ = _contacted(tmp_path, days_ago=8)
+    store.record_result(cid, "2026-11", sessions=120, orders=3, net_sales=150.0)
+    text = digest(store)
+    assert "contacted 1" in text and "Qué hacer hoy" in text
+    assert "followup" in text and "| 120 | 3 | 150.00 € |" in text
+
+
+def test_result_command_records_numbers(tmp_path):
+    from harvey.creators.cli import cmd_creators
+    db = tmp_path / "c.db"
+    store = CreatorStore(db)
+    cid, _ = store.upsert(good_creator())
+    cmd_creators(SimpleNamespace(action="result", target=cid, month="2026-11", db=str(db),
+                                 fields=["sessions=80", "orders=2", "net_sales=99,90", "gift_cost=30"],
+                                 status=""))
+    r = store.results("2026-11")[0]
+    assert (r["sessions"], r["orders"], r["net_sales"], r["gift_cost"]) == (80, 2, 99.9, 30.0)

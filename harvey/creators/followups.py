@@ -168,3 +168,37 @@ async def process_inbox(store, messages: list[dict], brain, config) -> list[dict
             store.mark_seen(mid)
         results.append({"message_id": mid, "from": sender, "creator_id": row["id"], **result})
     return results
+
+
+def digest(store, today: date | None = None) -> str:
+    """One page for the phone: what is due, what waits for approval, how
+    each creator is doing. Read-only."""
+    today = today or date.today()
+    rows = store.list_creators()
+    by_status: dict[str, int] = {}
+    for r in rows:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    pending = store.list_proposals("pending_review")
+    approved = store.list_proposals("approved")
+    collabs = store.collaborations()
+    actions = due_actions(store, today)
+    lines = [f"# Resumen de colaboraciones · {today.isoformat()}", ""]
+    lines.append("**Creadoras:** " + (", ".join(f"{k} {v}" for k, v in sorted(by_status.items())) or "ninguna"))
+    lines.append(f"**Esperan tu revisión:** {len(pending)} propuesta(s); "
+                 f"**aprobadas sin borrador:** {len(approved)}.")
+    lines.append(f"**Colaboraciones:** {len(collabs)} "
+                 f"({sum(1 for k in collabs if k['status'] == 'published')} publicadas).")
+    unlabelled = [k for k in collabs if k["status"] == "published" and k.get("labelled_as_ad") != 1]
+    if unlabelled:
+        lines.append(f"**Atención:** {len(unlabelled)} publicación(es) sin etiqueta de publicidad confirmada.")
+    lines += ["", "## Qué hacer hoy", ""]
+    lines += [f"{i}. {a['who']}: {a['what']} → `{a['how']}`" for i, a in enumerate(actions, 1)] or ["Nada pendiente."]
+    results = store.results()
+    if results:
+        lines += ["", "## Resultados registrados", "",
+                  "| Creadora | Periodo | Visitas | Pedidos | Ventas |", "|---|---|---:|---:|---:|"]
+        names = {r["id"]: r["handle"] for r in rows}
+        for r in results:
+            lines.append(f"| @{names.get(r['creator_id'], r['creator_id'])} | {r['period']} | "
+                         f"{r['sessions']} | {r['orders']} | {r['net_sales']:.2f} € |")
+    return "\n".join(lines)

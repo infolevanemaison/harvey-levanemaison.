@@ -14,7 +14,7 @@ import sys
 from harvey.creators.store import CreatorStore
 
 ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "propose", "proposals",
-           "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo",
+           "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo", "digest", "result",
            "followup", "reply", "inbox", "collab", "collab-set", "collabs", "link",
            "report", "queries", "purge")
 
@@ -236,6 +236,28 @@ def cmd_creators(args) -> None:
         for a in actions:
             print(f"  [{a['priority']}] {a['who']}: {a['what']}\n      → {a['how']}")
         print()
+        return
+
+    if action == "result":
+        # Numbers come from the read-only Shopify queries (harvey creators queries).
+        cid = _need(args, "el id de la creadora")
+        if not store.get(cid):
+            sys.exit(f"  No existe {cid}")
+        if not args.month:
+            sys.exit("  Indica el periodo: --month AAAA-MM")
+        values = {}
+        for item in args.fields:
+            key, _, value = item.partition("=")
+            if key not in ("sessions", "orders", "net_sales", "gift_cost", "fee"):
+                sys.exit(f"  Campo desconocido: {key}")
+            values[key] = float(value.replace(",", ".")) if key in ("net_sales", "gift_cost", "fee") else int(value)
+        store.record_result(cid, args.month, **values)
+        print(f"\n  Resultados de {args.month} guardados para {cid}.\n")
+        return
+
+    if action == "digest":
+        from harvey.creators.followups import digest
+        print("\n" + digest(store) + "\n")
         return
 
     if action == "followup":

@@ -43,6 +43,14 @@ Ese archivo no se sube a GitHub. Completa con Claude los campos `COMPLETAR`
 - en otro caso se prepara una respuesta en su idioma que espera tu aprobación
   y, aprobada, va como borrador **dentro del mismo hilo** de Gmail.
 
+**Resumen semanal:** «Dame el resumen de colaboraciones». Claude ejecuta
+`harvey creators digest`: creadoras por estado, propuestas pendientes,
+colaboraciones, tareas del día y resultados.
+
+**Registrar resultados:** «Anota que @usuario trajo 80 visitas, 2 pedidos y
+99,90 € en noviembre». Claude ejecuta `harvey creators result <id> --month
+2026-11 sessions=80 orders=2 net_sales=99.90`.
+
 **Revisar el correo de golpe:** «Mira en Gmail si han respondido las
 creadoras». Claude busca en tu Gmail con el conector, guarda los mensajes
 en un JSON fuera del repositorio y ejecuta `harvey creators inbox
