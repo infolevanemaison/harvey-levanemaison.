@@ -76,3 +76,29 @@ def test_catalog_is_sorted_worst_first_and_summarised(tmp_path, capsys):
     path.write_text(json.dumps({"data": {"products": {"nodes": items}}}), encoding="utf-8")
     cmd_shop(SimpleNamespace(action="audit", target=str(path), json=False))
     assert "Venta sin control de stock" in capsys.readouterr().out
+
+
+def test_diff_reports_only_what_changed(tmp_path, capsys):
+    from harvey.shopaudit import diff_catalog, sha256_manifest
+    before = [product(handle="a"), product(handle="b", templateSuffix="buildora-x"), product(handle="c")]
+    after = [product(handle="a"), product(handle="b", templateSuffix="levane"), product(handle="d")]
+    d = diff_catalog(before, after)
+    assert d == {"added": ["d"], "removed": ["c"], "changed": {"b": ["templateSuffix"]}, "unchanged": 1}
+    f = tmp_path / "x.json"
+    f.write_text("{}", encoding="utf-8")
+    assert sha256_manifest([f])["x.json"] == \
+        "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    b, a = tmp_path / "b.json", tmp_path / "a.json"
+    b.write_text(json.dumps(before), encoding="utf-8")
+    a.write_text(json.dumps(after), encoding="utf-8")
+    cmd_shop(SimpleNamespace(action="diff", target=str(b), after=str(a), json=False))
+    assert "~ b: templateSuffix" in capsys.readouterr().out
+
+
+def test_diff_ignores_fields_only_one_export_asked_for():
+    from harvey.shopaudit import diff_catalog
+    before = [{"handle": "a", "m": {"id": "1", "value": "x"}, "extra": 1}]
+    after = [{"handle": "a", "m": {"value": "x", "updatedAt": "t"}, "status": "ACTIVE"}]
+    assert diff_catalog(before, after)["changed"] == {}
+    after[0]["m"]["value"] = "y"
+    assert diff_catalog(before, after)["changed"] == {"a": ["m"]}

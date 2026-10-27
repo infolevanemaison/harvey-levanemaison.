@@ -252,11 +252,47 @@ def to_json(audits: list[ProductAudit]) -> str:
                       ensure_ascii=False, indent=1)
 
 
+def _by_handle(products: list[dict]) -> dict[str, dict]:
+    return {p.get("handle", ""): p for p in products}
+
+
+def _common(value, other=None):
+    """value restricted to the keys it shares with other, recursively."""
+    if isinstance(value, dict) and isinstance(other, dict):
+        return {k: _common(value[k], other[k]) for k in set(value) & set(other)}
+    return value
+
+
+def diff_catalog(before: list[dict], after: list[dict]) -> dict:
+    """What changed between two exports of the same query: products added
+    or removed, and for each product the top-level fields that differ.
+    Used to prove a change touched only what it was meant to."""
+    b, a = _by_handle(before), _by_handle(after)
+    changed = {}
+    for handle in sorted(set(b) & set(a)):
+        # Only what both exports asked for: a field (or sub-field) present in
+        # just one of them is a different query, not a change.
+        fields = sorted(k for k in set(b[handle]) & set(a[handle])
+                        if _common(b[handle][k], a[handle][k]) != _common(a[handle][k], b[handle][k]))
+        if fields:
+            changed[handle] = fields
+    return {"added": sorted(set(a) - set(b)), "removed": sorted(set(b) - set(a)),
+            "changed": changed, "unchanged": len(set(a) & set(b)) - len(changed)}
+
+
+def sha256_manifest(paths) -> dict[str, str]:
+    """name -> sha256 of each file, to make a backup verifiable later."""
+    import hashlib
+    from pathlib import Path
+    return {Path(p).name: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths}
+
+
 def add_parser(subparsers) -> None:
     sub = subparsers.add_parser(
         "shop", help="Read-only Shopify catalog audit (from a JSON export of products)")
-    sub.add_argument("action", choices=("audit", "query"))
-    sub.add_argument("target", nargs="?", default="", help="audit: the products JSON file")
+    sub.add_argument("action", choices=("audit", "query", "diff"))
+    sub.add_argument("target", nargs="?", default="", help="audit: the products JSON file; diff: the BEFORE export")
+    sub.add_argument("after", nargs="?", default="", help="diff: the AFTER export")
     sub.add_argument("--json", action="store_true", help="audit: machine-readable output")
     sub.set_defaults(func=cmd_shop)
 
@@ -268,5 +304,19 @@ def cmd_shop(args) -> None:
         return
     if not args.target:
         raise SystemExit("  Falta el archivo JSON de productos.")
+    if args.action == "diff":
+        if not args.after:
+            raise SystemExit("  Falta la exportación de después.")
+        d = diff_catalog(load_products(args.target), load_products(args.after))
+        print(f"\n  Sin cambios: {d['unchanged']} · añadidos: {len(d['added'])} · "
+              f"quitados: {len(d['removed'])} · cambiados: {len(d['changed'])}")
+        for handle, fields in d["changed"].items():
+            print(f"  ~ {handle}: {', '.join(fields)}")
+        for handle in d["added"]:
+            print(f"  + {handle}")
+        for handle in d["removed"]:
+            print(f"  - {handle}")
+        print()
+        return
     audits = audit_catalog(load_products(args.target))
     print(to_json(audits) if args.json else report_markdown(audits))

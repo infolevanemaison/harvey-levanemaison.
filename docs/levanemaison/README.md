@@ -16,6 +16,7 @@ humana**. Harvey prepara, propone y mide; una persona decide y envía.
 | 3 | Gmail solo borradores + módulo de creadoras + medición | **Hecha en la rama `levanemaison/fase3-borradores`** (sin fusionar) |
 | 4 | Auditoría de tienda (`harvey shop audit`), cambios recomendados, seguimiento de colaboraciones y respuestas | **Hecha en la rama `levanemaison/fase4-auditoria`** (sin fusionar). Falta la revisión visual (dominio bloqueado) |
 | 5 | Tienda: copia de seguridad del tema, versión de pruebas sin contenido inventado, menú nuevo, francés sin publicar (piloto), simulación de checkout, promociones, políticas en borrador; Harvey: `creators inbox`, `harvey/promotions.py` | **Hecha en la rama `levanemaison/fase5-tienda`** (sin fusionar). En Shopify, todo sin publicar |
+| 6 | Correcciones urgentes en producción (autorizadas): página de opiniones falsas despublicada; Alba, Aura y leggings sin valoraciones, cifras ni garantías inventadas. Copia de seguridad verificable antes y comprobación después. En pruebas: carrito con plazos, francés de colecciones y menú, diagnóstico del IVA; `harvey shop diff` | **Hecha en la rama `levanemaison/fase6-correcciones`** (sin fusionar) |
 | 4b | Búsqueda de creadoras por APIs oficiales (YouTube, Instagram Business Discovery) | Pendiente; hoy la lista se rellena a mano |
 | 5 | Informe semanal automático desde Shopify | Consultas listas; falta programarlo (requiere tu autorización) |
 | 6 | Boutiques (mayorista o depósito), solo si los márgenes lo permiten | En espera |
