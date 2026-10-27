@@ -627,3 +627,15 @@ def test_result_command_records_numbers(tmp_path):
                                  status=""))
     r = store.results("2026-11")[0]
     assert (r["sessions"], r["orders"], r["net_sales"], r["gift_cost"]) == (80, 2, 99.9, 30.0)
+
+
+def test_unprovable_shop_claims_block_a_proposal():
+    from harvey.creators.proposals import claim_issues
+    assert claim_issues("Nuestro vestido más vendido, con miles de clientas satisfechas.")
+    assert claim_issues("Livraison en 24h et qualité garantie.")
+    assert claim_issues("Quedan las últimas unidades.")
+    # Ordinary, true descriptions pass.
+    assert claim_issues("Envío gratis a España y Francia; la entrega tarda de 8 a 12 días laborables.") == []
+    assert claim_issues("Me encantaría enviarte una propuesta para colaborar.") == []
+    issues = check_proposal("Hola", "Te escribo por nuestro best seller.", "es", CreatorOfferConfig())
+    assert any("no se puede demostrar" in i for i in issues)

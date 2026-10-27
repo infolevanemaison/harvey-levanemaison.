@@ -18,9 +18,26 @@ humana**. Harvey prepara, propone y mide; una persona decide y envía.
 | 5 | Tienda: copia de seguridad del tema, versión de pruebas sin contenido inventado, menú nuevo, francés sin publicar (piloto), simulación de checkout, promociones, políticas en borrador; Harvey: `creators inbox`, `harvey/promotions.py` | **Hecha en la rama `levanemaison/fase5-tienda`** (sin fusionar). En Shopify, todo sin publicar |
 | 6 | Correcciones urgentes en producción (autorizadas): página de opiniones falsas despublicada; Alba, Aura y leggings sin valoraciones, cifras ni garantías inventadas. Copia de seguridad verificable antes y comprobación después. En pruebas: carrito con plazos, francés de colecciones y menú, diagnóstico del IVA; `harvey shop diff` | **Hecha en la rama `levanemaison/fase6-correcciones`** (sin fusionar) |
 | 7 | Tema de pruebas sin la app de avisos de stock; colección interna (no publicada) con los 41 productos fuera de nicho; correcciones de contenido de 160 fichas preparadas sin aplicar (`harvey/shopfix.py`); `creators digest` y `creators result` | **Hecha en la rama `levanemaison/fase7-tienda`** (sin fusionar) |
+| 8 | Copia de seguridad completa del catálogo; correcciones de las 160 fichas probadas en una ficha piloto con comprobación de integridad; portada del tema de pruebas sin texto encima de la foto en el móvil; `harvey shop fix` y `harvey shop verify`; reglas para descripciones; las propuestas a creadoras no pueden afirmar ventas, reseñas, garantías ni urgencias | **Hecha en la rama `levanemaison/fase8-publicacion`** (sin fusionar) |
 | 4b | Búsqueda de creadoras por APIs oficiales (YouTube, Instagram Business Discovery) | Pendiente; hoy la lista se rellena a mano |
 | 5 | Informe semanal automático desde Shopify | Consultas listas; falta programarlo (requiere tu autorización) |
 | 6 | Boutiques (mayorista o depósito), solo si los márgenes lo permiten | En espera |
+
+## Qué añade la fase 8
+
+- `harvey shop fix productos.json --out correcciones.jsonl`: prepara, sin
+  aplicarlas, las correcciones del contenido de las fichas (plazos de entrega,
+  seguimiento, etiqueta «Más popular») y de las descripciones («encanta tanto»,
+  «para todo tipo de cuerpos», ™). Nada se escribe en Shopify.
+- `harvey shop verify antes.json despues.json`: compara una ficha antes y
+  después de corregirla. Comprueba estado, plantilla, fotos, tallas, variantes,
+  precios, disponibilidad, el resto de metacampos, que solo cambien las frases
+  de las reglas y que el botón «Añadir al carrito» siga visible. Termina con
+  error si algo falla.
+- Las propuestas, recordatorios y respuestas a creadoras se bloquean si
+  afirman cosas de la tienda que no se pueden demostrar (más vendido, miles de
+  clientas, valoraciones, garantizado, entrega en 24 h, últimas unidades),
+  en español y en francés.
 
 ## Qué añade la fase 5
 

@@ -78,6 +78,27 @@ def _detected_language(text: str) -> str:
     return "es" if es > fr else "fr"
 
 
+# Claims about the shop that nothing in it can back up yet: no sales data,
+# no published reviews, delivery is 8-12 working days, stock comes from the
+# supplier. Matched on folded text (no accents, lower case), ES and FR.
+_CLAIM_RE = re.compile(
+    r"\b(?:mas vendid[oa]s?|best ?sellers?|top ventas|meilleures? ventes?"
+    r"|miles de clientas|clientas satisfechas|milliers de clientes?|clientes? satisfaites?"
+    r"|valoraciones|resenas de clientas|5 estrellas|cinco estrellas|avis clients?|5 etoiles"
+    r"|garantizad[oa]s?|garantie?s?"
+    r"|entrega en 24|entrega en 48|envio en 24|livraison en 24|livraison en 48|livraison express"
+    r"|ultimas unidades|stock limitado|plazas limitadas|dernieres pieces|stock limite)\b")
+
+
+def claim_issues(text: str) -> list[str]:
+    """Shop claims in the message that the shop can't prove, or []."""
+    found = sorted({m.group(0) for m in _CLAIM_RE.finditer(fold(text))})
+    if not found:
+        return []
+    return [f"afirma algo de la tienda que no se puede demostrar ({', '.join(found)}): "
+            "sin datos de ventas, reseñas publicadas ni garantías propias, mejor no decirlo"]
+
+
 def condition_issues(text: str, offer) -> list[str]:
     """Why this text offers something the person hasn't approved, or []."""
     folded = fold(text)
@@ -106,6 +127,7 @@ def check_proposal(subject: str, body: str, language: str, offer) -> list[str]:
     gate = pre_send_check("creator@outreach.example", subject, body, kind="reply")
     issues += [r for r in gate.reasons if "recipient" not in r]
     issues += condition_issues(subject + "\n" + body, offer)
+    issues += claim_issues(subject + "\n" + body)
     words = len(body.split())
     if words > MAX_WORDS:
         issues.append(f"demasiado largo ({words} palabras; máximo {MAX_WORDS})")

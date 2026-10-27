@@ -290,10 +290,12 @@ def sha256_manifest(paths) -> dict[str, str]:
 def add_parser(subparsers) -> None:
     sub = subparsers.add_parser(
         "shop", help="Read-only Shopify catalog audit (from a JSON export of products)")
-    sub.add_argument("action", choices=("audit", "query", "diff"))
-    sub.add_argument("target", nargs="?", default="", help="audit: the products JSON file; diff: the BEFORE export")
-    sub.add_argument("after", nargs="?", default="", help="diff: the AFTER export")
+    sub.add_argument("action", choices=("audit", "query", "diff", "fix", "verify"))
+    sub.add_argument("target", nargs="?", default="",
+                     help="audit/fix: the products JSON file; diff/verify: the BEFORE export")
+    sub.add_argument("after", nargs="?", default="", help="diff/verify: the AFTER export")
     sub.add_argument("--json", action="store_true", help="audit: machine-readable output")
+    sub.add_argument("--out", default="", help="fix: where to write the metafieldsSet inputs (JSONL)")
     sub.set_defaults(func=cmd_shop)
 
 
@@ -304,6 +306,12 @@ def cmd_shop(args) -> None:
         return
     if not args.target:
         raise SystemExit("  Falta el archivo JSON de productos.")
+    if args.action == "fix":
+        _cmd_fix(args)
+        return
+    if args.action == "verify":
+        _cmd_verify(args)
+        return
     if args.action == "diff":
         if not args.after:
             raise SystemExit("  Falta la exportación de después.")
@@ -320,3 +328,50 @@ def cmd_shop(args) -> None:
         return
     audits = audit_catalog(load_products(args.target))
     print(to_json(audits) if args.json else report_markdown(audits))
+
+
+def load_product(path) -> dict:
+    """One product node, from a file holding the node itself or a raw
+    GraphQL answer ({"data": {"product": ...}})."""
+    data = json.load(open(path, encoding="utf-8"))
+    if isinstance(data, dict) and "data" in data:
+        data = data["data"].get("product") or {}
+    return data
+
+
+def _cmd_fix(args) -> None:
+    """Prepare (never apply) the content corrections for a catalog export."""
+    from harvey.shopfix import fix_catalog, fix_description, report_markdown as fix_report
+    products = load_products(args.target)
+    inputs, report = fix_catalog(products)
+    descriptions = []
+    for p in products:
+        new, changes = fix_description(p.get("descriptionHtml") or "")
+        if changes:
+            descriptions.append({"id": p.get("id"), "handle": p.get("handle"),
+                                 "descriptionHtml": new, "cambios": changes})
+    print("\n" + fix_report(report))
+    print(f"\n{len(descriptions)} descripciones cambiarían.")
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as f:
+            f.writelines(json.dumps({"input": i}, ensure_ascii=False) + "\n" for i in inputs)
+        desc_path = args.out + ".descripciones.json"
+        with open(desc_path, "w", encoding="utf-8") as f:
+            json.dump(descriptions, f, ensure_ascii=False, indent=1)
+        print(f"\n  Preparado, sin aplicar: {args.out} y {desc_path}")
+    print("  Nada se ha escrito en Shopify. Revisa y aprueba antes de aplicarlo.\n")
+
+
+def _cmd_verify(args) -> None:
+    """Compare one product before and after a content correction."""
+    from harvey.shopfix import integrity_report
+    if not args.after:
+        raise SystemExit("  Falta la exportación de después.")
+    rows = integrity_report(load_product(args.target), load_product(args.after))
+    print()
+    for label, ok in rows:
+        print(f"  {'OK ' if ok else 'MAL'}  {label}")
+    bad = [label for label, ok in rows if not ok]
+    print("\n  Todo en orden.\n" if not bad else f"\n  Revisar: {', '.join(bad)}\n")
+    if bad:
+        raise SystemExit(1)

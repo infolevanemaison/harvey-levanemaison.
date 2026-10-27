@@ -102,3 +102,40 @@ def test_diff_ignores_fields_only_one_export_asked_for():
     assert diff_catalog(before, after)["changed"] == {}
     after[0]["m"]["value"] = "y"
     assert diff_catalog(before, after)["changed"] == {"a": ["m"]}
+
+
+def test_fix_prepares_files_and_verify_passes_on_a_clean_change(tmp_path, capsys):
+    import json as _json
+    from types import SimpleNamespace
+    from harvey.shopfix import fix_sections
+    sections = _json.dumps({"hero": {"cta_add": "Añadir al carrito", "ocultar_compra": False,
+                                     "informacion": [{"contenido_html":
+                                     "la entrega tarda entre 7 y 15 días"}]}}, ensure_ascii=False)
+    node = {"id": "gid://shopify/Product/1", "handle": "vestido-ejemplo", "status": "ACTIVE",
+            "descriptionHtml": "<p>Por qué esta prenda encanta tanto:</p>",
+            "media": {"nodes": [{"id": "m1"}]}, "variants": {"nodes": [{"id": "v1", "price": "49.95"}]},
+            "metafields": {"nodes": [{"namespace": "shopipi", "key": "sections", "value": sections}]}}
+    src = tmp_path / "productos.json"
+    src.write_text(_json.dumps([node], ensure_ascii=False), encoding="utf-8")
+    out = tmp_path / "fix.jsonl"
+    cmd_shop(SimpleNamespace(action="fix", target=str(src), after="", json=False, out=str(out)))
+    assert "1 fichas cambiarían" in capsys.readouterr().out
+    line = _json.loads(out.read_text(encoding="utf-8").splitlines()[0])["input"]
+    assert line["ownerId"] == "gid://shopify/Product/1"
+    descs = _json.loads((tmp_path / "fix.jsonl.descripciones.json").read_text(encoding="utf-8"))
+    assert "encanta" not in descs[0]["descriptionHtml"]
+
+    after = dict(node, metafields={"nodes": [{"namespace": "shopipi", "key": "sections",
+                                              "value": fix_sections("x", sections)[0]}]})
+    b, a = tmp_path / "antes.json", tmp_path / "despues.json"
+    b.write_text(_json.dumps({"data": {"product": node}}, ensure_ascii=False), encoding="utf-8")
+    a.write_text(_json.dumps(after, ensure_ascii=False), encoding="utf-8")
+    cmd_shop(SimpleNamespace(action="verify", target=str(b), after=str(a), json=False, out=""))
+    assert "Todo en orden" in capsys.readouterr().out
+
+    broken = dict(after, media={"nodes": []})
+    a.write_text(_json.dumps(broken, ensure_ascii=False), encoding="utf-8")
+    import pytest
+    with pytest.raises(SystemExit):
+        cmd_shop(SimpleNamespace(action="verify", target=str(b), after=str(a), json=False, out=""))
+    assert "fotos" in capsys.readouterr().out
