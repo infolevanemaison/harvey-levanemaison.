@@ -290,12 +290,16 @@ def sha256_manifest(paths) -> dict[str, str]:
 def add_parser(subparsers) -> None:
     sub = subparsers.add_parser(
         "shop", help="Read-only Shopify catalog audit (from a JSON export of products)")
-    sub.add_argument("action", choices=("audit", "query", "diff", "fix", "verify"))
+    sub.add_argument("action", choices=("audit", "query", "diff", "fix", "verify", "plan"))
     sub.add_argument("target", nargs="?", default="",
                      help="audit/fix: the products JSON file; diff/verify: the BEFORE export")
     sub.add_argument("after", nargs="?", default="", help="diff/verify: the AFTER export")
     sub.add_argument("--json", action="store_true", help="audit: machine-readable output")
-    sub.add_argument("--out", default="", help="fix: where to write the metafieldsSet inputs (JSONL)")
+    sub.add_argument("--out", default="",
+                     help="fix: where to write the metafieldsSet inputs (JSONL); plan: output folder")
+    sub.add_argument("--skip", default="", help="plan: comma-separated handles already corrected")
+    sub.add_argument("--accepted-payments", default="",
+                     help="plan: payment icons the shop really accepts, comma-separated (default: leave icons)")
     sub.set_defaults(func=cmd_shop)
 
 
@@ -311,6 +315,9 @@ def cmd_shop(args) -> None:
         return
     if args.action == "verify":
         _cmd_verify(args)
+        return
+    if args.action == "plan":
+        _cmd_plan(args)
         return
     if args.action == "diff":
         if not args.after:
@@ -362,12 +369,66 @@ def _cmd_fix(args) -> None:
     print("  Nada se ha escrito en Shopify. Revisa y aprueba antes de aplicarlo.\n")
 
 
+def _load_any(path):
+    data = json.load(open(path, encoding="utf-8"))
+    if isinstance(data, list) or (isinstance(data, dict) and "products" in data.get("data", data)):
+        return load_products(path)
+    return load_product(path)
+
+
+def _cmd_plan(args) -> None:
+    """Write the batches, their undo and the manifest. Applies nothing."""
+    from pathlib import Path
+    from harvey.shopfix import plan_batches
+    if not args.out:
+        raise SystemExit("  Indica la carpeta de salida con --out.")
+    accepted = set(filter(None, args.accepted_payments.split(","))) or None
+    plan = plan_batches(load_products(args.target), skip=set(filter(None, args.skip.split(","))),
+                        accepted_payments=accepted)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for i, (batch, undo) in enumerate(zip(plan["lotes"], plan["restaurar"]), 1):
+        (out / f"lote_{i:02d}.json").write_text(
+            json.dumps({"metafields": batch}, ensure_ascii=False), encoding="utf-8")
+        (out / f"restaurar_{i:02d}.json").write_text(
+            json.dumps({"metafields": undo}, ensure_ascii=False), encoding="utf-8")
+    from harvey.shopfix import fix_description
+    descriptions = []
+    for p in load_products(args.target):
+        old = p.get("descriptionHtml") or ""
+        new, changes = fix_description(old)
+        if changes:
+            descriptions.append({"id": p.get("id"), "handle": p.get("handle"), "antes": old,
+                                 "despues": new, "cambios": changes})
+    (out / "descripciones.json").write_text(json.dumps(descriptions, ensure_ascii=False, indent=1),
+                                            encoding="utf-8")
+    (out / "manifiesto.json").write_text(json.dumps(plan["manifiesto"], ensure_ascii=False, indent=1),
+                                         encoding="utf-8")
+    sums = sha256_manifest(sorted(out.glob("*.json")))
+    (out / "SHA256SUMS").write_text("".join(f"{v}  {k}\n" for k, v in sums.items()), encoding="utf-8")
+    print(f"\n  {len(plan['manifiesto'])} fichas en {len(plan['lotes'])} lotes y "
+          f"{len(descriptions)} descripciones · carpeta {out}")
+    if not plan["con_compare_digest"]:
+        print("  Aviso: la exportación no trae compareDigest; vuelve a exportar con él antes de aplicar.")
+    print("  Nada se ha escrito en Shopify.\n")
+
+
 def _cmd_verify(args) -> None:
-    """Compare one product before and after a content correction."""
-    from harvey.shopfix import integrity_report
+    """Compare one product, or a whole export, before and after."""
+    from harvey.shopfix import integrity_report, verify_catalog
     if not args.after:
         raise SystemExit("  Falta la exportación de después.")
-    rows = integrity_report(load_product(args.target), load_product(args.after))
+    before, after = _load_any(args.target), _load_any(args.after)
+    if isinstance(before, list):
+        r = verify_catalog(before, after if isinstance(after, list) else [after])
+        print(f"\n  Fichas correctas: {r['ok']} · con problemas: {len(r['fallos'])}")
+        for handle, bad in r["fallos"].items():
+            print(f"  MAL  {handle}: {', '.join(bad)}")
+        print()
+        if r["fallos"]:
+            raise SystemExit(1)
+        return
+    rows = integrity_report(before, after)
     print()
     for label, ok in rows:
         print(f"  {'OK ' if ok else 'MAL'}  {label}")

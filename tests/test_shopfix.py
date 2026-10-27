@@ -123,3 +123,30 @@ def test_description_claims_are_toned_down_and_nothing_else():
     assert "Perfecto para el día a día" in new          # ordinary praise stays
     assert len(changes) == 3
     assert fix_description(new) == (new, [])
+
+
+def test_plan_has_an_exact_undo_for_every_write_and_skips_the_pilot():
+    from harvey.shopfix import plan_batches
+    products = [{"id": f"gid://shopify/Product/{i}", "handle": f"p{i}",
+                 "metafields": {"nodes": [{"namespace": "shopipi", "key": "sections",
+                                           "value": sections(), "compareDigest": f"d{i}"}]}}
+                for i in range(30)]
+    plan = plan_batches(products, batch_size=25, skip={"p0"})
+    assert [len(b) for b in plan["lotes"]] == [25, 4]
+    assert plan["con_compare_digest"]
+    first, undo = plan["lotes"][0][0], plan["restaurar"][0][0]
+    assert first["ownerId"] == undo["ownerId"] == "gid://shopify/Product/1"
+    assert first["compareDigest"] == "d1" and "compareDigest" not in undo
+    assert undo["value"] == sections()                  # restoring puts back the exact bytes
+    assert "7 y 15" not in first["value"]
+    assert {m["handle"] for m in plan["manifiesto"]} == {f"p{i}" for i in range(1, 30)}
+
+
+def test_verify_catalog_flags_only_the_broken_product():
+    from harvey.shopfix import verify_catalog
+    raw = with_buy_button(sections())
+    fixed, _ = fix_sections("x", raw)
+    before = [dict(node(raw), handle="a"), dict(node(raw), handle="b")]
+    after = [dict(node(fixed), handle="a"), dict(node(fixed, media={"nodes": []}), handle="b")]
+    r = verify_catalog(before, after)
+    assert r["ok"] == 1 and list(r["fallos"]) == ["b"] and "fotos" in r["fallos"]["b"]

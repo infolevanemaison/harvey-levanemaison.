@@ -128,6 +128,72 @@ def fix_catalog(products: list[dict], accepted_payments=None) -> tuple[list[dict
     return inputs, report
 
 
+def _sha(text: str) -> str:
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sections_digest(product: dict) -> str:
+    """Shopify's compareDigest of the sections metafield, when the export
+    asked for it: a write carrying it fails if the page changed since."""
+    if (product.get("m") or {}).get("compareDigest"):
+        return product["m"]["compareDigest"]
+    for m in (product.get("metafields") or {}).get("nodes") or []:
+        if m.get("namespace") == "shopipi" and m.get("key") == "sections":
+            return m.get("compareDigest") or ""
+    return ""
+
+
+def plan_batches(products: list[dict], batch_size: int = 25, skip=(),
+                 accepted_payments=None) -> dict:
+    """Everything needed to apply the corrections safely, in batches:
+    the writes, the exact writes that undo them, and a manifest to check
+    each product against afterwards. skip: handles already corrected (the
+    pilot). Nothing here talks to Shopify."""
+    apply, restore, manifest = [], [], []
+    for p in products:
+        if p.get("handle") in skip:
+            continue
+        raw = sections_value(p)
+        if not raw:
+            continue
+        new, fix = fix_sections(p.get("handle", ""), raw, accepted_payments)
+        if new == raw:
+            continue
+        base = {"ownerId": p["id"], "namespace": "shopipi", "key": "sections", "type": "json"}
+        write = dict(base, value=new)
+        digest = _sections_digest(p)
+        if digest:
+            write["compareDigest"] = digest
+        apply.append(write)
+        restore.append(dict(base, value=raw))
+        manifest.append({"id": p["id"], "handle": p.get("handle", ""),
+                         "sha_antes": _sha(raw), "sha_despues": _sha(new),
+                         "cambios": fix.changes, "iconos_retirados": fix.removed_payment_icons})
+    chunks = lambda rows: [rows[i:i + batch_size] for i in range(0, len(rows), batch_size)]
+    return {"lotes": chunks(apply), "restaurar": chunks(restore), "manifiesto": manifest,
+            "con_compare_digest": all("compareDigest" in w for w in apply)}
+
+
+def verify_catalog(before: list[dict], after: list[dict]) -> dict:
+    """integrity_report for every product present in both exports, plus the
+    products that changed when they shouldn't have (no rule applies)."""
+    b = {p.get("handle"): p for p in before}
+    failed, ok = {}, 0
+    for p in after:
+        old = b.get(p.get("handle"))
+        if old is None:
+            continue
+        rows = integrity_report(old, p)
+        bad = [label for label, good in rows if not good]
+        if bad:
+            failed[p.get("handle")] = bad
+        else:
+            ok += 1
+    return {"ok": ok, "fallos": failed,
+            "sin_contraparte": sorted(set(b) - {p.get("handle") for p in after})}
+
+
 def only_rule_changes(before_raw: str, after_raw: str) -> bool:
     """True when after_raw is exactly what the rules make of before_raw: no
     other text, image, price or block of the page has moved."""
