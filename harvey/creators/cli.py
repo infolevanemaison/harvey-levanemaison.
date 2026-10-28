@@ -17,7 +17,7 @@ ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "p
            "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo", "digest", "result",
            "followup", "reply", "inbox", "collab", "collab-set", "collabs", "link",
            "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal", "pipeline", "value", "duplicates", "find", "commission-sim",
-           "break-even", "attribution")
+           "break-even", "attribution", "search-plan")
 
 
 def add_parser(subparsers) -> None:
@@ -178,6 +178,42 @@ def cmd_creators(args) -> None:
             prof = " · ".join(f"{r:g} % → {p:.2f} EUR" for r, p in b.profit.items())
             print(f"  {b.product}: paga {b.paid:.2f} · sin IVA {b.net:.2f} · margen antes de comisión "
                   f"{b.margin:.2f} EUR · comisión máxima {b.max_rate_pct:g} %\n    {prof}")
+        print()
+        return
+
+    if action == "search-plan":
+        # Read-only: prints which searches to run today. Runs none of them.
+        from datetime import UTC, datetime
+
+        from harvey.creators.search_plan import (
+            MAX_SEARCHES,
+            load_log,
+            load_templates,
+            plan,
+            yield_by_type,
+        )
+        fields = dict(f.split("=", 1) for f in (args.fields or []) if "=" in f)
+        if "registro" not in fields:
+            sys.exit("  Uso: search-plan <plantillas.csv> registro=<busquedas.csv> [n=6] [espera=14]")
+        templates = load_templates(_need(args, "el CSV de plantillas"))
+        log = load_log(fields["registro"])
+        result = plan(templates, log, datetime.now(UTC).date(), int(fields.get("n", MAX_SEARCHES)),
+                      int(fields.get("espera", 14)))
+        print(f"\n  Búsquedas de hoy ({len(result.today)} de {MAX_SEARCHES} como máximo). "
+              "Harvey no las ejecuta:\n")
+        for i, q in enumerate(result.today, 1):
+            print(f"  {i}. [{q.market} · {q.kind}] {q.text}")
+        if result.retired:
+            print("\n  Sin candidatas nuevas en sus últimos usos (para que la propietaria las cambie):")
+            for q in result.retired:
+                print(f"  - [{q.market} · {q.kind}] {q.text}")
+        print(f"\n  En espera por uso reciente: {len(result.waiting)}")
+        totals = yield_by_type(templates, log)
+        if totals:
+            print("\n  Resultado registrado por tipo de búsqueda:")
+            for kind, t in totals.items():
+                print(f"  - {kind}: {t['busquedas']} búsquedas, {t['nuevas']} nuevas, "
+                      f"{t['conocidas']} ya conocidas, {t['descartadas']} descartadas")
         print()
         return
 
