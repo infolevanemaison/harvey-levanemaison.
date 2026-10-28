@@ -23,6 +23,22 @@ humana**. Harvey prepara, propone y mide; una persona decide y envía.
 | 5 | Informe semanal automático desde Shopify | Consultas listas; falta programarlo (requiere tu autorización) |
 | 6 | Boutiques (mayorista o depósito), solo si los márgenes lo permiten | En espera |
 
+## Datos entre sesiones (repositorio privado)
+
+La máquina de la nube se borra entre sesiones, así que los datos de creadoras
+no viven en `data/creators.db`, sino en un **repositorio privado aparte**:
+
+```bash
+harvey creators restore ../datos-privados/datos      # al empezar
+harvey creators check-backup ../datos-privados/datos
+harvey creators backup ../datos-privados/datos       # al terminar; después commit y push
+```
+
+Cada tabla se escribe como JSON ordenado, con un manifiesto de filas y SHA-256.
+Una copia alterada o incompleta se rechaza sin tocar la base. Harvey se niega a
+escribir la copia dentro de este repositorio público y en una carpeta que
+contenga archivos con aspecto de credenciales.
+
 ## Qué añade la fase 8
 
 - `harvey shop fix productos.json --out correcciones.jsonl`: prepara, sin

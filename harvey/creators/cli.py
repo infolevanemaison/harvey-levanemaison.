@@ -16,7 +16,7 @@ from harvey.creators.store import CreatorStore
 ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "propose", "proposals",
            "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo", "digest", "result",
            "followup", "reply", "inbox", "collab", "collab-set", "collabs", "link",
-           "report", "queries", "purge")
+           "report", "queries", "purge", "backup", "restore", "check-backup")
 
 
 def add_parser(subparsers) -> None:
@@ -80,6 +80,10 @@ def cmd_creators(args) -> None:
         for e in result["errors"]:
             print(f"  ✗ {e}")
         print("  Siguiente: harvey creators list\n")
+        return
+
+    if action in ("backup", "restore", "check-backup"):
+        _cmd_backup(store, action, _need(args, "la carpeta del repositorio privado de datos"))
         return
 
     if action == "export":
@@ -434,3 +438,33 @@ def _report(args, store) -> None:
                                          int(row.get("orders") or 0),
                                          float(row.get("net_sales") or 0), e))
     print("\n" + report_markdown(results, f"Resultados {args.month or ''}".strip()) + "\n")
+
+
+def _cmd_backup(store, action: str, folder: str) -> None:
+    """Save the whole store to, or load it from, the private data repo's folder."""
+    from pathlib import Path
+    from harvey.paths import PROJECT_ROOT
+    from harvey.creators import sync
+    target = Path(folder).resolve()
+    if target == PROJECT_ROOT.resolve() or PROJECT_ROOT.resolve() in target.parents:
+        raise SystemExit("  Esa carpeta está dentro del repositorio público de Harvey. "
+                         "Usa el clon del repositorio privado de datos.")
+    try:
+        if action == "backup":
+            manifest = sync.dump(store, target)
+            counts = ", ".join(f"{t} {m['filas']}" for t, m in manifest["tablas"].items())
+            print(f"\n  Copia escrita en {target}: {counts}.")
+            print("  Falta: git add, commit y push en el repositorio privado.\n")
+        elif action == "restore":
+            counts = sync.restore(store, target)
+            print(f"\n  Datos recuperados de {target}: "
+                  + ", ".join(f"{t} {n}" for t, n in counts.items()) + ".\n")
+        else:
+            same = sync.matches(store, target)
+            for table, ok in same.items():
+                print(f"  {'OK ' if ok else 'DIF'}  {table}")
+            if not all(same.values()):
+                raise SystemExit("  La base local y la copia no coinciden.")
+            print("  La base local y la copia coinciden.\n")
+    except sync.BackupError as e:
+        raise SystemExit(f"  Copia no válida: {e}") from None
