@@ -82,8 +82,8 @@ def test_missing_audience_data_is_said_not_guessed():
 
 def test_no_professional_contact_means_not_contactable():
     s = score_creator(good_creator(pro_contact_email="", pro_contact_source=""))
-    assert not s.contactable
-    assert any("contacto profesional" in w for w in s.warnings)
+    assert not s.contactable and s.channel == ""
+    assert any("canal de colaboraciones" in w for w in s.warnings)
 
 
 def test_cost_score_rewards_cheap_interactions():
@@ -689,3 +689,18 @@ def test_add_proposal_checks_the_text_and_never_duplicates(tmp_path):
     cmd_creators(SimpleNamespace(**{**vars(args), "target": cid2}))
     blocked = [p for p in CreatorStore(db).list_proposals() if p["creator_id"] == cid2][0]
     assert blocked["issues"]                                   # unapproved conditions flagged
+
+
+def test_a_platform_channel_counts_as_verified_but_not_as_email():
+    s = score_creator(good_creator(pro_contact_email="",
+                                   pro_contact_source="https://plataforma.example/perfil"))
+    assert s.channel == "canal" and not s.contactable
+
+
+def test_small_accounts_and_blogs_are_not_discarded_for_it():
+    from harvey.creators.scoring import DISCARD
+    small = score_creator(good_creator(followers=900, avg_likes=60, avg_comments=9))
+    assert small.verdict != DISCARD
+    assert any("Cuenta pequeña" in w for w in small.warnings)
+    blog = score_creator(Creator(handle="blog_ficticio", platform="blog", country="ES"))
+    assert blog.verdict != DISCARD and blog.estimated_fee_eur is None   # no invented fee

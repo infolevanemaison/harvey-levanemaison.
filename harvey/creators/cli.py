@@ -16,7 +16,7 @@ from harvey.creators.store import CreatorStore
 ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "propose", "proposals",
            "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo", "digest", "result",
            "followup", "reply", "inbox", "collab", "collab-set", "collabs", "link",
-           "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal")
+           "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal", "pipeline", "value")
 
 
 def add_parser(subparsers) -> None:
@@ -130,6 +130,46 @@ def cmd_creators(args) -> None:
         store.forget(cid)
         print(f"\n  {cid}: datos borrados. Queda solo su usuario marcado como baja, "
               "para no volver a añadirla.\n")
+        return
+
+    if action == "pipeline":
+        from harvey.creators.commerce import pipeline
+        rows = pipeline(store.list_creators(), store.list_proposals())
+        print(f"\n  Cartera de creadoras abiertas ({len(rows)}), de más a menos prioritaria:\n")
+        for r in rows:
+            canal = {"email": "email", "canal": "canal verificado"}.get(r["channel"], "sin canal")
+            print(f"  [{r['id']}] {r['name'] or r['handle']} ({r['country']}) · {r['verdict']} · "
+                  f"{canal} · prioridad {r['priority']}")
+            print(f"      → {r['next']}")
+        print()
+        return
+
+    if action == "value":
+        # What a collaboration must sell to pay for itself. Nothing is offered.
+        from harvey.creators.commerce import deal
+        econ = _config().creators.economics
+        fields = dict(f.split("=", 1) for f in (args.fields or []) if "=" in f)
+        if args.target and "=" in args.target:
+            k, v = args.target.split("=", 1)
+            fields[k] = v
+        try:
+            fee = float(fields.get("fee", 0))
+            aov = float(fields.get("aov", econ.avg_order_value_eur or 0))
+            margin = float(fields.get("margin", econ.gross_margin_pct or 0))
+            d = deal(fee, aov, margin, float(fields.get("commission", 0)), float(fields.get("gift", 0)))
+        except ValueError:
+            sys.exit("  Usa números: value fee=120 aov=55 margin=45 [commission=10] [gift=30]")
+        if not aov or not margin:
+            sys.exit("  Falta el ticket medio (aov=) o el margen (margin=): no los invento.")
+        print("\n  Supuestos: " + "; ".join(d.assumptions))
+        if d.unit_contribution is None:
+            print("  Cada pedido pierde dinero con esa comisión: no es rentable.\n")
+            return
+        print(f"  Cada pedido deja {d.unit_contribution:.2f} EUR.")
+        if d.break_even_orders is not None:
+            print(f"  Pedidos necesarios para recuperar el coste: {d.break_even_orders}.")
+        print("  Coste máximo (tarifa + producto) que se recupera con "
+              + ", ".join(f"{n} pedidos: {v:.0f} EUR" for n, v in d.max_cost_for_orders.items()) + ".\n")
         return
 
     if action == "add-proposal":

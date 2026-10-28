@@ -16,7 +16,7 @@ any one creator. Cost is an estimate unless she quoted a fee.
 
 from dataclasses import asdict, dataclass, field
 
-PLATFORMS = ("instagram", "tiktok", "youtube")
+PLATFORMS = ("instagram", "tiktok", "youtube", "blog")
 
 # Interactions per post / followers that count as healthy, by size.
 # Instagram engagement falls as accounts grow; TikTok and YouTube are
@@ -81,6 +81,9 @@ class Score:
     contactable: bool
     reasons: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # How she can be reached for a collaboration: "email", "canal" (a
+    # platform, form or agency she publishes for brand proposals) or "".
+    channel: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -113,7 +116,8 @@ def _pct_points(value: float | None, full_at: float, points: float) -> float:
 def estimate_fee(c: Creator) -> tuple[float, float] | None:
     if c.quoted_fee_eur is not None:
         return (float(c.quoted_fee_eur), float(c.quoted_fee_eur))
-    if c.followers <= 0:
+    if c.followers <= 0 or c.platform not in FEE_PER_1K_FOLLOWERS:
+        # No public rule of thumb for blogs: ask her rate instead of guessing.
         return None
     low, high = FEE_PER_1K_FOLLOWERS.get(c.platform, FEE_PER_1K_FOLLOWERS["instagram"])
     k = c.followers / 1000
@@ -210,14 +214,26 @@ def score_creator(c: Creator, countries=("ES", "FR"), min_followers: int = 2_000
 
     # ── Hard rules: these decide the verdict whatever the score ──
     contactable = bool(c.pro_contact_email and c.pro_contact_source)
-    if not contactable:
-        warnings.append("No consta un contacto profesional publicado por ella: no se le escribe "
-                        "por email. Solo por la vía que ella ofrezca (formulario, agencia, plataforma).")
+    channel = "email" if contactable else ("canal" if c.pro_contact_source else "")
+    if channel == "email":
+        reasons.append(f"Contacto profesional publicado por ella ({c.pro_contact_source}).")
+    elif channel == "canal":
+        reasons.append(f"Canal de colaboraciones verificado: {c.pro_contact_source}. "
+                       "Se le escribe solo por esa vía, no por email.")
+    else:
+        warnings.append("No consta un canal de colaboraciones publicado por ella: no se le "
+                        "escribe. Primero hay que verificar uno (web, formulario, agencia, plataforma).")
     disqualified = []
     if countries and c.country and c.country.upper() not in {x.upper() for x in countries}:
         disqualified.append(f"país {c.country} fuera del objetivo")
-    if c.followers and not (min_followers <= c.followers <= max_followers):
-        disqualified.append(f"{c.followers} seguidores fuera del rango {min_followers}-{max_followers}")
+    if c.followers and c.followers > max_followers:
+        disqualified.append(f"{c.followers} seguidores: por encima de {max_followers}, coste "
+                            "probablemente alto para el presupuesto")
+    elif c.followers and c.followers < min_followers:
+        # Small is not bad: a small, well-matched audience can sell better and
+        # cost less. Say it, don't discard it.
+        warnings.append(f"Cuenta pequeña ({c.followers} seguidores): alcance limitado; "
+                        "interesa si su audiencia encaja y el coste es bajo.")
     if c.audience_target_country_pct is not None and c.audience_target_country_pct < 20:
         disqualified.append(f"solo {c.audience_target_country_pct:.0f}% de su audiencia en España/Francia")
     if c.platform not in PLATFORMS:
@@ -241,4 +257,4 @@ def score_creator(c: Creator, countries=("ES", "FR"), min_followers: int = 2_000
     return Score(total=total, verdict=verdict, audience=round(audience, 1),
                  engagement=engagement, authenticity=authenticity, cost=cost,
                  engagement_rate=rate, estimated_fee_eur=fee, estimated_reach=reach,
-                 contactable=contactable, reasons=reasons, warnings=warnings)
+                 contactable=contactable, reasons=reasons, warnings=warnings, channel=channel)
