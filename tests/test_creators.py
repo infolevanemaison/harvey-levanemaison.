@@ -663,3 +663,29 @@ def test_footer_names_the_channel_when_there_is_no_published_email():
     by_email = Creator(handle="email_ficticia", pro_contact_email="colabora@ficticia.example",
                        pro_contact_source="https://ficticia.example/contacto")
     assert "dirección profesional" in footer(by_email, "es")
+
+
+def test_add_proposal_checks_the_text_and_never_duplicates(tmp_path):
+    from types import SimpleNamespace
+    from harvey.creators.cli import cmd_creators
+    from harvey.creators.scoring import Creator
+    from harvey.creators.store import CreatorStore
+    db = tmp_path / "c.db"
+    cid, _ = CreatorStore(db).upsert(Creator(handle="estilo_ficticio", country="ES", language="es"))
+    text = tmp_path / "p.txt"
+    text.write_text("Asunto: Hola desde Levanemaison\nTe escribo para conocer cómo trabajas con marcas.",
+                    encoding="utf-8")
+    args = SimpleNamespace(action="add-proposal", target=cid, db=str(db), text_file=str(text),
+                           status="", export=False, ref="", month="", text="", message_id="",
+                           terms="", due="", path="", fields=[])
+    cmd_creators(args)
+    props = CreatorStore(db).list_proposals()
+    assert len(props) == 1 and props[0]["status"] == "pending_review"
+    assert props[0]["subject"] == "Hola desde Levanemaison"
+    with pytest.raises(SystemExit):
+        cmd_creators(args)                                   # no duplicates
+    text.write_text("Asunto: Oferta\nTe regalamos un vestido y un 20 % de descuento.", encoding="utf-8")
+    cid2, _ = CreatorStore(db).upsert(Creator(handle="otra_ficticia", country="ES", language="es"))
+    cmd_creators(SimpleNamespace(**{**vars(args), "target": cid2}))
+    blocked = [p for p in CreatorStore(db).list_proposals() if p["creator_id"] == cid2][0]
+    assert blocked["issues"]                                   # unapproved conditions flagged

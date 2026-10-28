@@ -16,7 +16,7 @@ from harvey.creators.store import CreatorStore
 ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "propose", "proposals",
            "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo", "digest", "result",
            "followup", "reply", "inbox", "collab", "collab-set", "collabs", "link",
-           "report", "queries", "purge", "backup", "restore", "check-backup")
+           "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal")
 
 
 def add_parser(subparsers) -> None:
@@ -130,6 +130,33 @@ def cmd_creators(args) -> None:
         store.forget(cid)
         print(f"\n  {cid}: datos borrados. Queda solo su usuario marcado como baja, "
               "para no volver a añadirla.\n")
+        return
+
+    if action == "add-proposal":
+        # A first message written outside Harvey's brain (by the daily routine
+        # or by hand) goes through the same checks and waits for approval.
+        from pathlib import Path
+        from harvey.creators.proposals import check_proposal, proposal_language
+        cid = _need(args, "el id de la creadora")
+        row = store.get(cid)
+        if not row:
+            sys.exit(f"  No existe {cid}")
+        if row["status"] in ("opted_out", "rejected"):
+            sys.exit(f"  {cid} está en «{row['status']}»: no se le prepara ninguna propuesta.")
+        if any(p["creator_id"] == cid and p["status"] in ("pending_review", "approved")
+               for p in store.list_proposals()):
+            sys.exit(f"  {cid} ya tiene una propuesta pendiente o aprobada.")
+        if not args.text_file:
+            sys.exit("  Falta --text-file: primera línea el asunto, después el cuerpo.")
+        subject, _, body = Path(args.text_file).read_text(encoding="utf-8").strip().partition("\n")
+        subject, body = subject.removeprefix("Asunto:").strip(), body.strip()
+        language = proposal_language(row["creator"])
+        issues = check_proposal(subject, body, language, _config().creators.offer)
+        pid = store.add_proposal(cid, language, subject, body, issues)
+        print(f"\n  Propuesta {pid} ({language}) guardada como pendiente de tu revisión. No se envía.")
+        for i in issues:
+            print(f"  ✗ {i}")
+        print()
         return
 
     if action == "propose":
