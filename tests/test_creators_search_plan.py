@@ -76,7 +76,7 @@ def test_never_more_than_the_daily_limit():
 def test_check_log_flags_broken_rules():
     run = [Use(TODAY, f"q{i}", run="r1", new=1, reasons=[]) for i in range(7)]
     run.append(Use(TODAY, "site:collabstr.com x", run="r2", reasons=["fuente_no_permitida"]))
-    run.append(Use(TODAY, "y", run="r2", sources=["https://www.collabstr.com/x"], reasons=["tamano"]))
+    run.append(Use(TODAY, "y", run="r2", sources=["https://www.collabstr.com/x"], reasons=["sin_canal"]))
     run.append(Use(TODAY, "z", run="r2", reasons=["inventado"]))
     run.append(Use(TODAY, "w", run="r2", duplicates=2, duplicate_ids=["a1"], reasons=["duplicada"]))
     run.append(Use(TODAY, "v", run="r2"))
@@ -104,13 +104,13 @@ def test_csv_loading_new_and_old_format(tmp_path):
     r = tmp_path / "registro.csv"
     r.write_text("fecha,ejecucion,consulta,mercado,resultados,nuevas,duplicadas,ids_duplicadas,"
                  "descartadas,motivos,fuentes\n"
-                 "2030-05-01,2030-05-01-1,uno,ES,10,1,2,a1;b2,3,duplicada;tamano,https://blog.example\n"
+                 "2030-05-01,2030-05-01-1,uno,ES,10,1,2,a1;b2,3,duplicada;sin_canal,https://blog.example\n"
                  "ayer,,dos,ES,1,1,0,,0,,\n", encoding="utf-8")
     log = load_log(str(r))
     assert len(log) == 1
     u = log[0]
     assert (u.run, u.new, u.duplicates, u.duplicate_ids, u.reasons, u.sources) == (
-        "2030-05-01-1", 1, 2, ["a1", "b2"], ["duplicada", "tamano"], ["https://blog.example"])
+        "2030-05-01-1", 1, 2, ["a1", "b2"], ["duplicada", "sin_canal"], ["https://blog.example"])
     old = tmp_path / "antiguo.csv"
     old.write_text("fecha,consulta,resultados,nuevas,conocidas,descartadas,motivo\n"
                    "2030-05-02,dos,4,0,1,0,duplicada\n", encoding="utf-8")
@@ -119,4 +119,9 @@ def test_csv_loading_new_and_old_format(tmp_path):
     assert load_log(str(tmp_path / "no-existe.csv")) == []
     assert yield_by_type(templates, log) == {
         "mediakit": {"busquedas": 1, "nuevas": 1, "duplicadas": 2, "descartadas": 3}}
-    assert reasons_count(log + [o]) == {"duplicada": 2, "tamano": 1}
+    assert reasons_count(log + [o]) == {"duplicada": 2, "sin_canal": 1}
+
+
+def test_size_is_not_a_discard_reason():
+    problems = check_log([Use(TODAY, "a", run="r1", reasons=["tamano"])])
+    assert problems == ["r1: motivo desconocido tamano en «a»"]

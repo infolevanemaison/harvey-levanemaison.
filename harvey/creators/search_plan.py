@@ -41,10 +41,10 @@ MARKETS = ("ES", "FR")
 # without written permission. Add others with ``blocked=``.
 BLOCKED_SOURCES = ("collabstr",)
 # Why a result did not become a new candidate. One or more per search,
-# separated by ";".
+# separated by ";". Size is not here on purpose: follower count is scored,
+# never a reason to leave a creator out, so the log flags it as unknown.
 REASONS = {
     "duplicada": "ya estaba en la cartera",
-    "tamano": "fuera del rango de seguidoras",
     "sin_canal": "sin canal de colaboraciones publicado",
     "fuera_mercado": "ni España ni Francia",
     "fuera_nicho": "no es moda femenina",
