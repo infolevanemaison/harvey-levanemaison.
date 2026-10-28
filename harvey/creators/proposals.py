@@ -60,6 +60,16 @@ FOOTERS = {
            'préférez ne plus recevoir de message, répondez "stop" et je les supprimerai.'),
 }
 POLICY = {"es": " (más información: {url})", "fr": " (plus d'informations : {url})"}
+# When there is no published email, the message goes through the channel she
+# offers for collaborations (a platform, a form), so say that instead.
+CHANNEL_FOOTERS = {
+    "es": ("Te escribo por el canal de colaboraciones que ofreces en {source}. Tratamos tus "
+           "datos solo para proponerte esta colaboración{policy}. Si prefieres que no te "
+           'escriba, responde "baja" y borraré tus datos.'),
+    "fr": ("Je vous écris via le canal de collaborations que vous proposez sur {source}. Vos "
+           "données servent uniquement à vous proposer cette collaboration{policy}. Si vous "
+           'préférez ne plus recevoir de message, répondez "stop" et je les supprimerai.'),
+}
 
 
 def proposal_language(creator) -> str:
@@ -144,7 +154,8 @@ def check_proposal(subject: str, body: str, language: str, offer) -> list[str]:
 def footer(creator, language: str, privacy_url: str = "") -> str:
     source = creator.pro_contact_source or creator.profile_url or creator.platform
     policy = POLICY[language].format(url=privacy_url) if privacy_url else ""
-    return FOOTERS[language].format(source=source, policy=policy)
+    templates = FOOTERS if creator.pro_contact_email else CHANNEL_FOOTERS
+    return templates[language].format(source=source, policy=policy)
 
 
 def build_prompt(creator, config, language: str, brain=None) -> str:

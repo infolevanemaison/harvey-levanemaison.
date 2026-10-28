@@ -35,6 +35,8 @@ FEE_PER_1K_FOLLOWERS = {"instagram": (5.0, 12.0), "tiktok": (4.0, 10.0),
 REACH_RATE = {"instagram": 0.20, "tiktok": 0.35, "youtube": 0.25}
 
 PRIORITY, REVIEW, DISCARD = "prioritaria", "revisar", "descartar"
+# Not enough data to judge: neither audience nor engagement is known yet.
+INCOMPLETE = "faltan datos"
 
 
 @dataclass
@@ -209,19 +211,26 @@ def score_creator(c: Creator, countries=("ES", "FR"), min_followers: int = 2_000
     # ── Hard rules: these decide the verdict whatever the score ──
     contactable = bool(c.pro_contact_email and c.pro_contact_source)
     if not contactable:
-        warnings.append("No publica un contacto profesional: no se le escribe por email. "
-                        "Solo por la vía que ella ofrezca (formulario, agencia, plataforma).")
+        warnings.append("No consta un contacto profesional publicado por ella: no se le escribe "
+                        "por email. Solo por la vía que ella ofrezca (formulario, agencia, plataforma).")
     disqualified = []
     if countries and c.country and c.country.upper() not in {x.upper() for x in countries}:
         disqualified.append(f"país {c.country} fuera del objetivo")
     if c.followers and not (min_followers <= c.followers <= max_followers):
         disqualified.append(f"{c.followers} seguidores fuera del rango {min_followers}-{max_followers}")
+    if c.audience_target_country_pct is not None and c.audience_target_country_pct < 20:
+        disqualified.append(f"solo {c.audience_target_country_pct:.0f}% de su audiencia en España/Francia")
     if c.platform not in PLATFORMS:
         disqualified.append(f"plataforma {c.platform!r} no contemplada")
 
     if disqualified:
         verdict = DISCARD
         reasons.insert(0, "Descartada: " + "; ".join(disqualified) + ".")
+    elif rate is None and (c.audience_female_pct is None or c.audience_35_65_pct is None):
+        # Authenticity starts full, so an empty profile would otherwise score
+        # ~25 and read as "discard". Missing is not bad: say it's missing.
+        verdict = INCOMPLETE
+        reasons.insert(0, "Sin interacción ni audiencia anotadas: todavía no se puede valorar.")
     elif total >= 70:
         verdict = PRIORITY
     elif total >= 50:

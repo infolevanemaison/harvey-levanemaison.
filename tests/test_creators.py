@@ -639,3 +639,27 @@ def test_unprovable_shop_claims_block_a_proposal():
     assert claim_issues("Me encantaría enviarte una propuesta para colaborar.") == []
     issues = check_proposal("Hola", "Te escribo por nuestro best seller.", "es", CreatorOfferConfig())
     assert any("no se puede demostrar" in i for i in issues)
+
+
+def test_a_creator_with_no_data_yet_is_incomplete_not_discarded():
+    from harvey.creators.scoring import Creator, INCOMPLETE, DISCARD, score_creator
+    s = score_creator(Creator(handle="sin_datos_ficticia", country="ES", followers=12_000))
+    assert s.verdict == INCOMPLETE
+    too_big = score_creator(Creator(handle="grande_ficticia", country="ES", followers=900_000))
+    assert too_big.verdict == DISCARD          # hard rules still win
+
+
+def test_an_audience_mostly_outside_spain_and_france_is_discarded():
+    from harvey.creators.scoring import Creator, DISCARD, score_creator
+    s = score_creator(Creator(handle="lejos_ficticia", country="FR", followers=40_000,
+                              audience_target_country_pct=5))
+    assert s.verdict == DISCARD and "5% de su audiencia" in s.reasons[0]
+
+
+def test_footer_names_the_channel_when_there_is_no_published_email():
+    from harvey.creators.scoring import Creator
+    by_platform = Creator(handle="plataforma_ficticia", profile_url="https://collabs.example/x")
+    assert "canal de colaboraciones" in footer(by_platform, "es")
+    by_email = Creator(handle="email_ficticia", pro_contact_email="colabora@ficticia.example",
+                       pro_contact_source="https://ficticia.example/contacto")
+    assert "dirección profesional" in footer(by_email, "es")
