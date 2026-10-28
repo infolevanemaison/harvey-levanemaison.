@@ -163,6 +163,41 @@ def check_catalog(products: list[dict]) -> list[Alert]:
     return out
 
 
+def check_variants(variants: list[dict]) -> list[Alert]:
+    """Variants that keep selling when stock runs out (inventory policy CONTINUE).
+
+    The store's stock numbers protect nothing while the policy is CONTINUE:
+    Shopify takes the order anyway. Those already at zero or below are taking
+    orders for units nobody has confirmed exist.
+    """
+    active = [v for v in variants if ((v.get("product") or {}).get("status") or "") == "ACTIVE"]
+    if not active:
+        return []
+    cont = [v for v in active if v.get("inventoryPolicy") == "CONTINUE"]
+    empty = [v for v in cont if (v.get("inventoryQuantity") or 0) <= 0]
+    out = []
+    if empty:
+        by_product: dict[str, int] = {}
+        for v in empty:
+            title = (v.get("product") or {}).get("title") or (v.get("product") or {}).get("handle") or "?"
+            by_product[title] = by_product.get(title, 0) + 1
+        top = sorted(by_product.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+        names = ", ".join(f"{t} ({n})" for t, n in top)
+        out.append(Alert(HIGH, "venta_con_cero_existencias", "catalogo",
+                         f"{len(empty)} variantes de {len(by_product)} productos activos aceptan pedidos "
+                         f"con 0 existencias o menos. Los que más: {names}.",
+                         "Verificar el stock real con el proveedor; cambiar a «no vender sin "
+                         "existencias» necesita tu aprobación.", needs_owner=True))
+    if cont:
+        products = {(v.get("product") or {}).get("handle") for v in cont}
+        out.append(Alert(MEDIUM, "politica_seguir_vendiendo", "catalogo",
+                         f"{len(cont)} de {len(active)} variantes activas ({len(products)} productos) "
+                         "siguen vendiendo aunque se agote el stock.",
+                         "Mientras sea así, el stock de Shopify no evita vender lo que no hay; "
+                         "priorizar los productos con proveedor sincronizado.", needs_owner=True))
+    return out
+
+
 def _purchases(row: dict) -> int:
     total = 0
     for a in row.get("actions") or []:
@@ -222,6 +257,10 @@ def run_checks(snapshot: dict, now: datetime | None = None,
         alerts += check_catalog(snapshot["products"])
     else:
         unchecked.append("catálogo")
+    if "variants" in snapshot:
+        alerts += check_variants(snapshot["variants"])
+    else:
+        unchecked.append("variantes")
     if "campaigns" in snapshot:
         alerts += check_ads(snapshot["campaigns"], snapshot.get("insights") or [], s)
     else:

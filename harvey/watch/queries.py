@@ -27,10 +27,22 @@ ORDERS_QUERY = """query($first: Int!, $after: String, $q: String) {
   }
 }"""
 
+# Every variant of the active products, with its inventory policy. The status
+# filter only works in lower case ("ACTIVE" silently returns nothing), and the
+# product status comes back too so the check never trusts the filter alone.
+VARIANTS_QUERY = """query($first: Int!, $after: String, $q: String) {
+  productVariants(first: $first, after: $after, query: $q) {
+    nodes { inventoryPolicy inventoryQuantity product { handle title status } }
+    pageInfo { hasNextPage endCursor }
+  }
+}"""
+VARIANTS_FILTER = "product_status:active"
+
 THEME_QUERY = "{ themes(first: 1, roles: [MAIN]) { nodes { id name role updatedAt } } }"
 
 # Meta Marketing API, GET only. Fields of /act_<id>/campaigns and /insights.
 META_CAMPAIGN_FIELDS = "id,name,effective_status,daily_budget,lifetime_budget,stop_time"
 META_INSIGHT_FIELDS = "campaign_id,campaign_name,spend,actions"
 
-SHOPIFY_QUERIES = {"orders": ORDERS_QUERY, "products": PRODUCTS_QUERY, "theme": THEME_QUERY}
+SHOPIFY_QUERIES = {"orders": ORDERS_QUERY, "products": PRODUCTS_QUERY, "theme": THEME_QUERY,
+                   "variants": VARIANTS_QUERY}

@@ -125,7 +125,7 @@ def test_ads_quiet_when_all_paused_and_no_spend():
 
 def test_missing_sources_are_reported_not_cleared():
     alerts, unchecked = run_checks({"orders": []}, NOW)
-    assert alerts == [] and set(unchecked) == {"tema publicado", "catálogo", "Meta Ads"}
+    assert alerts == [] and set(unchecked) == {"tema publicado", "catálogo", "variantes", "Meta Ads"}
 
 
 # --- state ---------------------------------------------------------------
@@ -302,6 +302,8 @@ def test_one_failing_shopify_source_does_not_hide_the_others(monkeypatch):
         query = json.loads(request.content)["query"]
         if "orders(" in query:
             return httpx.Response(200, json={"data": {"orders": {"nodes": [], "pageInfo": {}}}})
+        if "productVariants(" in query:
+            return httpx.Response(200, json={"data": {"productVariants": {"nodes": [], "pageInfo": {}}}})
         if "products(" in query:
             denied = {"message": "Access denied for someField field.", "extensions": {"code": "ACCESS_DENIED"}}
             return httpx.Response(200, json={"errors": [denied] * 50})
@@ -311,7 +313,7 @@ def test_one_failing_shopify_source_does_not_hide_the_others(monkeypatch):
     monkeypatch.setattr(fetch.httpx, "Client", lambda **kw: real_client(transport=transport))
     env = {"SHOPIFY_SHOP": "ejemplo.myshopify.com", "SHOPIFY_CLIENT_ID": "id", "SHOPIFY_CLIENT_SECRET": "sec"}
     snap, errors = fetch.snapshot_from_env(env=env)
-    assert set(snap) == {"orders", "theme"} and snap["theme"]["name"] == "Tema"
+    assert set(snap) == {"orders", "theme", "variants"} and snap["theme"]["name"] == "Tema"
     assert len(errors) == 1 and errors[0].startswith("products:")
     assert errors[0].count("Access denied") == 1 and "sec" not in errors[0]
 
@@ -321,3 +323,53 @@ def test_watch_products_query_needs_no_shipping_scope():
     assert "deliveryProfile" not in PRODUCTS_QUERY
     assert PRODUCTS_QUERY.count("{") == PRODUCTS_QUERY.count("}")
     check_query(PRODUCTS_QUERY)
+
+
+
+# --- variants that keep selling without stock ----------------------------
+
+def _variant(policy, qty, title="Ejemplo", status="ACTIVE"):
+    return {"inventoryPolicy": policy, "inventoryQuantity": qty,
+            "product": {"handle": title.lower(), "title": title, "status": status}}
+
+
+def test_variants_selling_at_zero_and_continue_policy():
+    from harvey.watch.checks import check_variants
+    variants = [_variant("CONTINUE", 0, "Vestido A"), _variant("CONTINUE", -2, "Vestido A"),
+                _variant("CONTINUE", 5, "Blusa B"), _variant("DENY", 0, "Falda C"),
+                _variant("CONTINUE", 0, "Borrador D", status="DRAFT")]
+    alerts = {a.code: a for a in check_variants(variants)}
+    assert set(alerts) == {"venta_con_cero_existencias", "politica_seguir_vendiendo"}
+    zero = alerts["venta_con_cero_existencias"]
+    assert zero.severity == "alta" and zero.needs_owner and "2 variantes de 1 productos" in zero.message
+    assert "Vestido A (2)" in zero.message and "Borrador" not in zero.message
+    assert "3 de 4 variantes activas (2 productos)" in alerts["politica_seguir_vendiendo"].message
+
+
+def test_variants_all_deny_is_quiet():
+    from harvey.watch.checks import check_variants
+    assert check_variants([_variant("DENY", 0), _variant("DENY", 3)]) == []
+    assert check_variants([]) == []
+
+
+def test_variants_filter_is_lower_case():
+    from harvey.watch.queries import VARIANTS_FILTER, VARIANTS_QUERY
+    assert VARIANTS_FILTER == "product_status:active"
+    check_query(VARIANTS_QUERY)
+
+
+def test_throttled_query_waits_and_retries_within_budget():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(200, json={"errors": [{"message": "Throttled",
+                                                         "extensions": {"code": "THROTTLED"}}]})
+        return httpx.Response(200, json={"data": {"themes": {"nodes": []}}})
+    budget = Budget(5)
+    reader = ShopifyReader("ejemplo.myshopify.com", "tok", budget, httpx.Client(transport=httpx.MockTransport(handler)))
+    waits = []
+    reader.sleep = waits.append
+    assert reader.query(SHOPIFY_QUERIES["theme"]) == {"themes": {"nodes": []}}
+    assert len(calls) == 2 and waits == [2] and budget.used == 2

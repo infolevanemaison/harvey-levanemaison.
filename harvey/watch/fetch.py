@@ -11,6 +11,7 @@ errors, reports or files.
 """
 
 import os
+import time
 
 import httpx
 
@@ -19,6 +20,7 @@ from harvey.watch.queries import (
     META_CAMPAIGN_FIELDS,
     META_INSIGHT_FIELDS,
     SHOPIFY_QUERIES,
+    VARIANTS_FILTER,
 )
 
 SHOPIFY_API_VERSION = "2026-10"
@@ -96,17 +98,25 @@ class ShopifyReader:
         self.url = f"https://{shop}/admin/api/{SHOPIFY_API_VERSION}/graphql.json"
         self.token, self.budget = token, budget
         self.client = client or httpx.Client(timeout=20)
+        self.sleep = time.sleep
 
-    def query(self, query: str, variables: dict | None = None) -> dict:
+    def query(self, query: str, variables: dict | None = None, retries: int = 3) -> dict:
         check_query(query)
-        self.budget.spend()
-        try:
-            r = self.client.post(self.url, json={"query": query, "variables": variables or {}},
-                                 headers={"X-Shopify-Access-Token": self.token})
-            r.raise_for_status()
-        except httpx.HTTPError as e:
-            raise RuntimeError(_clean(f"Shopify: {e}", self.token)) from None
-        body = r.json()
+        for attempt in range(retries + 1):
+            self.budget.spend()
+            try:
+                r = self.client.post(self.url, json={"query": query, "variables": variables or {}},
+                                     headers={"X-Shopify-Access-Token": self.token})
+                r.raise_for_status()
+            except httpx.HTTPError as e:
+                raise RuntimeError(_clean(f"Shopify: {e}", self.token)) from None
+            body = r.json()
+            throttled = any((e.get("extensions") or {}).get("code") == "THROTTLED"
+                            for e in body.get("errors") or [] if isinstance(e, dict))
+            if not throttled or attempt == retries:
+                break
+            # Shopify refills its query budget every second: wait, then try again.
+            self.sleep(2 * (attempt + 1))
         if body.get("errors"):
             raise RuntimeError(_clean(f"Shopify: {summarise_errors(body['errors'])}", self.token))
         return body.get("data") or {}
@@ -171,6 +181,8 @@ def snapshot_from_env(env=os.environ, budget: Budget | None = None,
             "orders": lambda: reader.nodes("orders", "orders", {"first": 50, "q": f"created_at:>={since}"}),
             "products": lambda: reader.nodes("products", "products", {"first": 50}),
             "theme": lambda: (reader.query(SHOPIFY_QUERIES["theme"])["themes"]["nodes"] or [{}])[0],
+            "variants": lambda: reader.nodes("variants", "productVariants",
+                                             {"first": 250, "q": VARIANTS_FILTER}, max_pages=20),
         }
         for key, read in sources.items() if reader else ():
             try:
