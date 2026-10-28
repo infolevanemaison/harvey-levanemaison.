@@ -186,23 +186,33 @@ def cmd_creators(args) -> None:
         from datetime import UTC, datetime
 
         from harvey.creators.search_plan import (
+            BLOCKED_SOURCES,
+            MAX_NEW,
             MAX_SEARCHES,
+            REASONS,
+            check_log,
             load_log,
             load_templates,
             plan,
+            reasons_count,
             yield_by_type,
         )
         fields = dict(f.split("=", 1) for f in (args.fields or []) if "=" in f)
         if "registro" not in fields:
-            sys.exit("  Uso: search-plan <plantillas.csv> registro=<busquedas.csv> [n=6] [espera=14]")
+            sys.exit("  Uso: search-plan <plantillas.csv> registro=<busquedas.csv> [n=6] [espera=14] "
+                     "[bloquear=fuente1,fuente2]")
+        blocked = BLOCKED_SOURCES + tuple(b.strip() for b in fields.get("bloquear", "").split(",")
+                                          if b.strip())
         templates = load_templates(_need(args, "el CSV de plantillas"))
         log = load_log(fields["registro"])
         result = plan(templates, log, datetime.now(UTC).date(), int(fields.get("n", MAX_SEARCHES)),
-                      int(fields.get("espera", 14)))
-        print(f"\n  Búsquedas de hoy ({len(result.today)} de {MAX_SEARCHES} como máximo). "
-              "Harvey no las ejecuta:\n")
+                      int(fields.get("espera", 14)), blocked=blocked)
+        print(f"\n  Búsquedas de hoy ({len(result.today)} de {MAX_SEARCHES} como máximo; "
+              f"{MAX_NEW} candidatas nuevas como máximo). Harvey no las ejecuta:\n")
         for i, q in enumerate(result.today, 1):
             print(f"  {i}. [{q.market} · {q.kind}] {q.text}")
+        if result.blocked:
+            print(f"\n  Excluidas por fuente no permitida ({', '.join(blocked)}): {len(result.blocked)}")
         if result.retired:
             print("\n  Sin candidatas nuevas en sus últimos usos (para que la propietaria las cambie):")
             for q in result.retired:
@@ -213,7 +223,16 @@ def cmd_creators(args) -> None:
             print("\n  Resultado registrado por tipo de búsqueda:")
             for kind, t in totals.items():
                 print(f"  - {kind}: {t['busquedas']} búsquedas, {t['nuevas']} nuevas, "
-                      f"{t['conocidas']} ya conocidas, {t['descartadas']} descartadas")
+                      f"{t['duplicadas']} duplicadas, {t['descartadas']} descartadas")
+        reasons = reasons_count(log)
+        if reasons:
+            print("\n  Motivos registrados:")
+            for code, count in reasons.items():
+                print(f"  - {code} ({REASONS.get(code, 'desconocido')}): {count}")
+        problems = check_log(log, blocked)
+        print("\n  Registro: " + ("en orden." if not problems else f"{len(problems)} problema(s):"))
+        for p in problems:
+            print(f"  ✗ {p}")
         print()
         return
 
