@@ -386,3 +386,31 @@ def test_catalog_summarises_conversion_obstacles_without_notifying():
     assert "1 de 1 productos activos" in alerts[0].message and "Una sola foto (1)" in alerts[0].message
     state = {"open": {}, "resolved": []}
     assert should_notify(update_state(state, alerts, NOW)) == []
+
+
+def _product(title, photos=6, collection=True):
+    return {"title": title, "handle": title.lower().replace(" ", "-"), "tracksInventory": True,
+            "totalInventory": 20, "mediaCount": {"count": photos}, "featuredMedia": {"alt": title},
+            "collections": {"nodes": [{"handle": "vestidos"}] if collection else []},
+            "descriptionHtml": "<p>" + "Vestido largo de punto, tejido: algodón y elastano. Guía de tallas en cm. " * 6 + "</p>",
+            "options": [{"name": "Talla", "values": ["S", "M"]}], "tags": [], "productType": "Vestido",
+            "seo": {"description": "Vestido de punto."}}
+
+
+def test_ready_to_promote_skips_serious_issues_and_zero_stock():
+    from harvey.watch.checks import ready_to_promote
+    products = [_product("Vestido Bueno"), _product("Vestido Sin Fotos", photos=1),
+                _product("Vestido Sin Stock")]
+    variants = [_variant("DENY", 3, "Vestido Bueno"), _variant("CONTINUE", 0, "Vestido Sin Stock")]
+    for v in variants:
+        v["product"]["handle"] = v["product"]["title"].lower().replace(" ", "-")
+    alerts = ready_to_promote(products, variants)
+    assert len(alerts) == 1 and alerts[0].code == "productos_mas_preparados"
+    msg = alerts[0].message
+    assert "Vestido Bueno" in msg and "Sin Fotos" not in msg and "Sin Stock" not in msg
+    assert alerts[0].severity == "baja" and not alerts[0].needs_owner
+
+
+def test_ready_to_promote_empty_when_nothing_qualifies():
+    from harvey.watch.checks import ready_to_promote
+    assert ready_to_promote([_product("Vestido X", photos=1)], []) == []

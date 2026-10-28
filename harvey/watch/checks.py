@@ -214,6 +214,47 @@ def check_variants(variants: list[dict]) -> list[Alert]:
     return out
 
 
+def ready_to_promote(products: list[dict], variants: list[dict], top: int = 5) -> list[Alert]:
+    """The active products closest to being safe to promote.
+
+    A product qualifies only with no critical or high audit finding and no
+    variant taking orders at zero stock. Among those, fewer medium findings
+    and fewer variants on "keep selling" rank first. It is a shortlist for
+    the owner to verify the supplier, not a claim that they will sell.
+    """
+    weight = {"critical": 100, "high": 10, "medium": 1, "low": 0}
+    by_handle: dict[str, dict] = {}
+    for v in variants:
+        prod = v.get("product") or {}
+        if prod.get("status") != "ACTIVE":
+            continue
+        row = by_handle.setdefault(prod.get("handle") or "", {"cont": 0, "zero": 0, "total": 0})
+        row["total"] += 1
+        if v.get("inventoryPolicy") == "CONTINUE":
+            row["cont"] += 1
+            if (v.get("inventoryQuantity") or 0) <= 0:
+                row["zero"] += 1
+    ranked = []
+    for a in audit_catalog(products):
+        if a.niche != "mujer":
+            continue
+        score = sum(weight.get(f.severity, 0) for f in a.findings)
+        stock = by_handle.get(a.handle, {"cont": 0, "zero": 0, "total": 0})
+        if score >= 10 or stock["zero"]:
+            continue
+        ranked.append((score, stock["cont"], a.title, stock))
+    if not ranked:
+        return []
+    ranked.sort(key=lambda r: (r[0], r[1], r[2]))
+    names = "; ".join(f"{t} ({sc} avisos menores, {st['cont']}/{st['total']} variantes en «seguir vendiendo»)"
+                      for sc, _, t, st in ranked[:top])
+    return [Alert(LOW, "productos_mas_preparados", "catalogo",
+                  f"{len(ranked)} productos activos sin problemas graves ni ventas con 0 existencias. "
+                  f"Los más preparados: {names}.",
+                  "Verificar proveedor, coste y plazo de estos antes de promocionar ninguno; "
+                  "cualquier campaña necesita tu aprobación.")]
+
+
 def _purchases(row: dict) -> int:
     total = 0
     for a in row.get("actions") or []:
@@ -275,6 +316,8 @@ def run_checks(snapshot: dict, now: datetime | None = None,
         unchecked.append("catálogo")
     if "variants" in snapshot:
         alerts += check_variants(snapshot["variants"])
+        if "products" in snapshot:
+            alerts += ready_to_promote(snapshot["products"], snapshot["variants"])
     else:
         unchecked.append("variantes")
     if "campaigns" in snapshot:
