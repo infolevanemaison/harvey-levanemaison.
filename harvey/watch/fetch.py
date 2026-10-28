@@ -1,10 +1,13 @@
 """Read-only fetchers for the watch, with a hard cap on requests.
 
-Shopify: POST to the Admin GraphQL endpoint, but every query goes through
-``guard.check_query`` first, and the token is meant to be a custom app's
-read-only token (read_orders, read_products, read_inventory, read_themes),
-so Shopify itself refuses any write. Meta: GET only, with an ``ads_read``
-token. Tokens come from the environment and never appear in errors or logs.
+Shopify: a Dev Dashboard app installed on the store with read scopes only
+(read_orders, read_products, read_inventory, read_themes). Each run trades
+its client id and secret for a 24-hour token (client credentials grant),
+keeps it in memory, and refuses to go on if the token carries any scope that
+is not a read scope, so a mistake in the app setup cannot turn into a write.
+Every query also goes through ``guard.check_query``. Meta: GET only, with an
+``ads_read`` token. Secrets come from the environment and never appear in
+errors, reports or files.
 """
 
 import os
@@ -39,6 +42,36 @@ def _clean(message: str, *secrets: str) -> str:
         if s:
             message = message.replace(s, "***")
     return message
+
+
+READ_SCOPES_ALLOWED = ("read_",)
+
+
+def shopify_token(shop: str, client_id: str, client_secret: str, budget: Budget,
+                  client: httpx.Client | None = None) -> str:
+    """Client credentials grant. Returns the token only if every scope is a read scope."""
+    if not shop.endswith(".myshopify.com"):
+        raise ValueError("SHOPIFY_SHOP debe ser <tienda>.myshopify.com")
+    budget.spend()
+    client = client or httpx.Client(timeout=20)
+    try:
+        r = client.post(f"https://{shop}/admin/oauth/access_token",
+                        data={"client_id": client_id, "client_secret": client_secret,
+                              "grant_type": "client_credentials"})
+        r.raise_for_status()
+        body = r.json()
+    except (httpx.HTTPError, ValueError) as e:
+        raise RuntimeError(_clean(f"Shopify (token): {e}", client_id, client_secret)) from None
+    token = body.get("access_token") or ""
+    scopes = [x.strip() for x in str(body.get("scope") or "").split(",") if x.strip()]
+    if not token:
+        raise RuntimeError("Shopify (token): respuesta sin token")
+    unsafe = [x for x in scopes if not x.startswith(READ_SCOPES_ALLOWED)]
+    if unsafe or not scopes:
+        raise RuntimeError("PARADA: la app de Shopify tiene permisos que no son de lectura: "
+                           + (", ".join(unsafe) or "ninguno declarado")
+                           + ". Quítalos en el Dev Dashboard antes de seguir.")
+    return token
 
 
 class ShopifyReader:
@@ -107,9 +140,12 @@ def snapshot_from_env(env=os.environ, budget: Budget | None = None,
     from datetime import UTC, datetime, timedelta
     budget = budget or Budget()
     snap, errors = {}, []
-    shop, token = env.get("SHOPIFY_SHOP", ""), env.get("SHOPIFY_READ_TOKEN", "")
-    if shop and token:
+    shop = env.get("SHOPIFY_SHOP", "")
+    cid, secret = env.get("SHOPIFY_CLIENT_ID", ""), env.get("SHOPIFY_CLIENT_SECRET", "")
+    token = ""
+    if shop and cid and secret:
         try:
+            token = shopify_token(shop, cid, secret, budget)
             reader = ShopifyReader(shop, token, budget)
             since = (datetime.now(UTC) - timedelta(days=order_days)).date().isoformat()
             snap["orders"] = reader.nodes("orders", "orders", {"first": 50, "q": f"created_at:>={since}"})
@@ -117,7 +153,7 @@ def snapshot_from_env(env=os.environ, budget: Budget | None = None,
             themes = reader.query(SHOPIFY_QUERIES["theme"])["themes"]["nodes"]
             snap["theme"] = themes[0] if themes else {}
         except Exception as e:  # noqa: BLE001 - a failed source is reported, not fatal
-            errors.append(_clean(str(e), token))
+            errors.append(_clean(str(e), token, cid, secret))
     account, mtoken = env.get("META_AD_ACCOUNT", ""), env.get("META_READ_TOKEN", "")
     if account and mtoken:
         try:

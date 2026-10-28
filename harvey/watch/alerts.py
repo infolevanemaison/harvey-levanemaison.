@@ -10,10 +10,23 @@ report instead of a stream of questions.
 
 import json
 import os
+import re
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from harvey.watch.checks import SEVERITIES, URGENT, Alert
+
+# Last line of defence: the queries ask for no personal data, but an error
+# message or a field could still carry some. Reports and alerts pass here.
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE = re.compile(r"(?<![\w#:/.])\+?\d(?:[ .]?\d){8,}(?!\w)")
+_TOKEN = re.compile(r"\b(?:shp[a-z]{2}_|EAA)[A-Za-z0-9_-]{8,}")
+
+
+def scrub(text: str, phones: bool = True) -> str:
+    text = _EMAIL.sub("[correo oculto]", text)
+    text = _TOKEN.sub("[clave oculta]", text)
+    return _PHONE.sub("[número oculto]", text) if phones else text
 
 
 def load_state(path: str) -> dict:
@@ -29,9 +42,10 @@ def load_state(path: str) -> dict:
 def save_state(state: dict, path: str) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".tmp"
+    # Ids (campaigns, themes) are long numbers: only emails and keys are scrubbed here.
+    text = scrub(json.dumps(state, ensure_ascii=False, indent=1, sort_keys=True), phones=False)
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=1, sort_keys=True)
-        f.write("\n")
+        f.write(text + "\n")
     os.replace(tmp, path)
 
 
@@ -116,3 +130,46 @@ def decisions(state: dict) -> str:
         lines.append(f"{i}. **{a['severity']}** · {a['message']} → {a['action']} "
                      f"(abierta desde {a['first_seen']})")
     return "\n".join(lines) + "\n"
+
+
+def daily_report(state: dict, now: datetime, max_age_hours: float = 3) -> str:
+    """What the owner reads once a day: health of the watch, then open items by area."""
+    lines = [f"# Informe diario de vigilancia · {now.strftime('%Y-%m-%d')}", ""]
+    last = state.get("last_run")
+    try:
+        last_dt = datetime.fromisoformat(last) if last else None
+    except ValueError:
+        last_dt = None
+    if last_dt is None:
+        lines.append("**urgente** · La vigilancia no se ha ejecutado nunca: no hay estado.")
+    elif now - last_dt > timedelta(hours=max_age_hours):
+        hours = (now - last_dt).total_seconds() / 3600
+        lines.append(f"**urgente** · La vigilancia lleva {hours:.0f} h sin ejecutarse "
+                     f"(última: {last}). Revisa GitHub → Actions.")
+    else:
+        lines.append(f"Vigilancia funcionando (última ejecución: {last}).")
+    lines.append("")
+    open_items = sorted(state.get("open", {}).values(),
+                        key=lambda a: (SEVERITIES.index(a["severity"]), a["first_seen"]))
+    by_area: dict[str, list] = {}
+    for a in open_items:
+        by_area.setdefault(_area(a["code"]) or "otros", []).append(a)
+    lines += ["## Abiertas por área", ""]
+    if not open_items:
+        lines.append("Ninguna.")
+    for area, items in by_area.items():
+        lines.append(f"**{area}**")
+        lines += [f"- {a['severity']} · {a['message']}" for a in items]
+        lines.append("")
+    since = now - timedelta(days=1)
+    recent = []
+    for a in state.get("resolved", []):
+        try:
+            if datetime.fromisoformat(a.get("resolved_at", "")) >= since:
+                recent.append(a)
+        except ValueError:
+            continue
+    lines += ["", "## Resueltas en las últimas 24 h", ""]
+    lines += [f"- {a['message']}" for a in recent] or ["Ninguna."]
+    lines += ["", decisions(state)]
+    return scrub("\n".join(lines))

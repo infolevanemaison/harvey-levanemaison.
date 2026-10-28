@@ -223,3 +223,71 @@ def test_spend_from_campaigns_paused_since_is_only_noted():
     insights = [{"campaign_id": "2", "campaign_name": "Ejemplo B", "spend": "2.50", "actions": []}]
     alerts = check_ads([{"id": "2", "effective_status": "PAUSED"}], insights, Settings())
     assert [(a.code, a.severity, a.needs_owner) for a in alerts] == [("gasto_antes_de_pausa", "media", False)]
+
+
+# --- token, privacy, daily report ---------------------------------------
+
+def _token_client(scope, seen=None):
+    def handler(request):
+        if seen is not None:
+            seen.append((request.method, request.url.path, request.content.decode()))
+        return httpx.Response(200, json={"access_token": "tok-corto", "scope": scope, "expires_in": 86399})
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_token_with_read_scopes_only():
+    from harvey.watch.fetch import shopify_token
+    seen = []
+    token = shopify_token("ejemplo.myshopify.com", "id-1", "secreto-1", Budget(2),
+                          _token_client("read_orders,read_products,read_themes", seen))
+    assert token == "tok-corto"
+    method, path, body = seen[0]
+    assert (method, path) == ("POST", "/admin/oauth/access_token") and "grant_type=client_credentials" in body
+
+
+@pytest.mark.parametrize("scope", ["read_orders,write_products", "write_orders", ""])
+def test_token_with_any_write_scope_stops(scope):
+    from harvey.watch.fetch import shopify_token
+    with pytest.raises(RuntimeError, match="PARADA"):
+        shopify_token("ejemplo.myshopify.com", "id-1", "secreto-1", Budget(2), _token_client(scope))
+
+
+def test_token_errors_hide_the_secret():
+    from harvey.watch.fetch import shopify_token
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401, json={})))
+    with pytest.raises(RuntimeError) as e:
+        shopify_token("ejemplo.myshopify.com", "id-1", "secreto-1", Budget(2), client)
+    assert "secreto-1" not in str(e.value)
+
+
+def test_scrub_hides_emails_phones_and_keys_but_not_dates_or_orders():
+    from harvey.watch.alerts import scrub
+    text = scrub("ana@example.com +34 600 000 000 shpat_abcdefgh1234 #1001 2030-03-31T12:00 12.50 EUR")
+    assert "@" not in text and "600 000 000" not in text and "shpat_" not in text
+    assert "#1001" in text and "2030-03-31T12:00" in text and "12.50 EUR" in text
+
+
+def test_reports_never_carry_an_email_from_an_error(tmp_path):
+    out = tmp_path / "v"
+    process({"orders": []}, str(out), NOW, errors=["fallo con cliente ana@example.com"])
+    for name in ("ultimo.md", "notificar.md", "estado.json", "decisiones.md"):
+        assert "ana@example.com" not in (out / name).read_text(encoding="utf-8")
+
+
+def test_daily_report_flags_a_stalled_watch():
+    from harvey.watch.alerts import daily_report
+    state = {"open": {}, "resolved": [], "last_run": (NOW - timedelta(hours=5)).isoformat()}
+    assert "urgente" in daily_report(state, NOW)
+    state["last_run"] = (NOW - timedelta(minutes=30)).isoformat()
+    assert "Vigilancia funcionando" in daily_report(state, NOW)
+    assert "no se ha ejecutado nunca" in daily_report({"open": {}, "resolved": []}, NOW)
+
+
+def test_daily_report_groups_open_items_and_lists_recent_resolutions():
+    from harvey.watch.alerts import daily_report
+    state = {"open": {}, "resolved": []}
+    update_state(state, check_orders([_order("#9020", 5)], NOW, Settings()), NOW)
+    update_state(state, [], NOW + timedelta(hours=1))
+    update_state(state, check_theme({"id": "t", "name": "NO PUBLICAR"}, Settings()), NOW + timedelta(hours=2))
+    text = daily_report(state, NOW + timedelta(hours=2))
+    assert "**tema publicado**" in text and "#9020" in text.split("Resueltas en las últimas 24 h")[1]
