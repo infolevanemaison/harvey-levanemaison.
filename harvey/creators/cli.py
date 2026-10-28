@@ -16,7 +16,8 @@ from harvey.creators.store import CreatorStore
 ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "propose", "proposals",
            "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo", "digest", "result",
            "followup", "reply", "inbox", "collab", "collab-set", "collabs", "link",
-           "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal", "pipeline", "value", "duplicates", "find", "commission-sim")
+           "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal", "pipeline", "value", "duplicates", "find", "commission-sim",
+           "break-even", "attribution")
 
 
 def add_parser(subparsers) -> None:
@@ -151,6 +152,49 @@ def cmd_creators(args) -> None:
                     else "no calculable (falta: " + ", ".join(line.missing) + ")")
             print(f"  {line.product} · {line.rate_pct:g} % → comisión {com} · beneficio por pedido {prof}")
         print()
+        return
+
+    if action == "break-even":
+        # Simulation only, from the cost register: nothing is offered or switched on.
+        import csv as _csv
+        from harvey.creators.commerce import break_even_table
+        fields = dict(f.split("=", 1) for f in (args.fields or []) if "=" in f)
+        rows = list(_csv.DictReader(open(_need(args, "el registro de costes"), encoding="utf-8-sig")))
+        num = lambda k: float(fields[k].replace(",", ".")) if k in fields else None
+        base = fields.get("base", "")
+        if base not in ("sin_iva", "con_iva"):
+            sys.exit("  Indica sobre qué se calcula la comisión: base=sin_iva o base=con_iva")
+        country = fields.get("pais", "es")
+        rates = [float(r) for r in fields.get("rates", "5,10,15").split(",")]
+        table = break_even_table(rows, country, base, num("pay_rate"), num("pay_fixed"),
+                                 num("discount") or 0.0, rates)
+        print(f"\n  Punto de equilibrio · envío a {country.upper()} · comisión sobre el importe "
+              f"{'sin IVA' if base == 'sin_iva' else 'con IVA'} · descuento {num('discount') or 0:g} %")
+        print("  Solo con costes comprobados (valor y fuente). No se ofrece ni se activa nada.\n")
+        for b in table:
+            if b.missing:
+                print(f"  {b.product}: no calculable (falta comprobar: {', '.join(b.missing)})")
+                continue
+            prof = " · ".join(f"{r:g} % → {p:.2f} EUR" for r, p in b.profit.items())
+            print(f"  {b.product}: paga {b.paid:.2f} · sin IVA {b.net:.2f} · margen antes de comisión "
+                  f"{b.margin:.2f} EUR · comisión máxima {b.max_rate_pct:g} %\n    {prof}")
+        print()
+        return
+
+    if action == "attribution":
+        # Read-only: orders exported with attribution.ORDERS_QUERY. Pays nobody.
+        import json as _json
+        from harvey.creators.attribution import (load_affiliates, load_sessions, orders_from,
+                                                report, summarise)
+        fields = dict(f.split("=", 1) for f in (args.fields or []) if "=" in f)
+        if "afiliadas" not in fields:
+            sys.exit("  Uso: attribution <pedidos.json> afiliadas=<afiliadas.csv> [sesiones=<csv>] [plazo=47]")
+        data = _json.load(open(_need(args, "el JSON de pedidos"), encoding="utf-8"))
+        orders = orders_from(data)
+        affiliates = load_affiliates(fields["afiliadas"])
+        sessions = load_sessions(fields["sesiones"]) if fields.get("sesiones") else None
+        print("\n" + report(summarise(orders, affiliates, sessions=sessions,
+                                       validation_days=int(fields.get("plazo", 47))), affiliates) + "\n")
         return
 
     if action in ("duplicates", "find"):

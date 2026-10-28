@@ -139,6 +139,9 @@ def commission_table(costs: list[dict], rates=(5.0, 10.0, 15.0),
     is paid on the net sale (price after discount, without VAT)."""
     out = []
     for row in costs:
+        row = dict(row)
+        row.setdefault("envio_proveedor", row.get("envio_es"))      # the cost register's column
+        row.setdefault("iva_pct", row.get("iva_es_pct"))
         vals = {k: _amount(row.get(k)) for k in REQUIRED_COSTS}
         missing = [k for k, v in vals.items() if v is None]
         if pay_rate_pct is None or pay_fixed is None:
@@ -156,4 +159,77 @@ def commission_table(costs: list[dict], rates=(5.0, 10.0, 15.0),
                                    - fee - commission, 2)
             out.append(CommissionLine(product=row.get("producto", "?"), rate_pct=rate,
                                       commission=commission, profit=profit, missing=missing))
+    return out
+
+
+# ── Break-even with checked costs only ──────────────────────────────────────
+
+BASES = ("sin_iva", "con_iva")
+UNCHECKED = ("pendiente", "supuesto", "estimado", "?")
+
+
+def _checked(row: dict, value_key: str, source_key: str) -> tuple[float | None, str]:
+    """A cost counts only with a value AND a source that says where it was
+    checked (an invoice, a supplier order, the shop's own record). An empty
+    source or one marked PENDIENTE / SUPUESTO / ESTIMADO is not a checked cost."""
+    value, source = _amount(row.get(value_key)), str(row.get(source_key) or "").strip()
+    if value is None or not source or source.lower().startswith(UNCHECKED):
+        return None, source
+    return value, source
+
+
+@dataclass
+class BreakEven:
+    product: str
+    country: str
+    base: str                          # what the commission is a percentage of
+    paid: float | None                 # what the customer pays, VAT included
+    net: float | None                  # paid without VAT
+    margin: float | None               # net - supplier - shipping - payment fee, before commission
+    max_rate_pct: float | None         # commission % on `base` that leaves exactly 0
+    profit: dict                       # {rate: profit per order}
+    missing: list[str]
+    sources: dict
+
+
+def break_even_table(costs: list[dict], country: str = "es", base: str = "sin_iva",
+                     pay_rate_pct: float | None = None, pay_fixed: float | None = None,
+                     discount_pct: float = 0.0, rates=(5.0, 10.0, 15.0)) -> list[BreakEven]:
+    """Per product, for one destination country: the margin an order leaves
+    before commission and the highest commission that still breaks even.
+
+    Columns read from the cost register: pvp, coste_proveedor/fuente_coste,
+    envio_<country>/fuente_envio_<country>, iva_<country>_pct/fuente_iva.
+    `base` says whether the commission is a percentage of the sale without
+    VAT (sin_iva) or of what the customer paid (con_iva). Nothing is
+    computed from a cost that has not been checked: it is listed as missing."""
+    if base not in BASES:
+        raise ValueError(f"base must be one of {BASES}")
+    cc = country.lower()
+    out = []
+    for row in costs:
+        pvp = _amount(row.get("pvp"))
+        supplier, s_src = _checked(row, "coste_proveedor", "fuente_coste")
+        ship, sh_src = _checked(row, f"envio_{cc}", f"fuente_envio_{cc}")
+        vat, v_src = _checked(row, f"iva_{cc}_pct", "fuente_iva")
+        missing = [k for k, v in (("pvp", pvp), ("coste_proveedor", supplier),
+                                  (f"envio_{cc}", ship), (f"iva_{cc}_pct", vat)) if v is None]
+        if pay_rate_pct is None or pay_fixed is None:
+            missing.append("comision_pago")
+        paid = net = margin = max_rate = None
+        profit = {}
+        if pvp is not None:
+            paid = round(pvp * (1 - discount_pct / 100), 2)
+        if paid is not None and vat is not None:
+            net = round(paid / (1 + vat / 100), 2)
+        if not missing:
+            fee = paid * pay_rate_pct / 100 + pay_fixed
+            margin = round(net - supplier - ship - fee, 2)
+            on = net if base == "sin_iva" else paid
+            max_rate = round(100 * margin / on, 1) if margin > 0 else 0.0
+            profit = {r: round(margin - on * r / 100, 2) for r in rates}
+        out.append(BreakEven(product=row.get("producto", "?"), country=cc, base=base, paid=paid,
+                             net=net, margin=margin, max_rate_pct=max_rate, profit=profit,
+                             missing=missing,
+                             sources={"coste": s_src, "envio": sh_src, "iva": v_src}))
     return out
