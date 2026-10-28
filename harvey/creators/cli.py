@@ -16,7 +16,7 @@ from harvey.creators.store import CreatorStore
 ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "propose", "proposals",
            "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo", "digest", "result",
            "followup", "reply", "inbox", "collab", "collab-set", "collabs", "link",
-           "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal", "pipeline", "value")
+           "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal", "pipeline", "value", "duplicates", "find")
 
 
 def add_parser(subparsers) -> None:
@@ -77,6 +77,9 @@ def cmd_creators(args) -> None:
     if action == "import":
         result = store.import_csv(_need(args, "el archivo CSV"), _config())
         print(f"\n  {result['added']} añadidas, {result['updated']} actualizadas.")
+        from harvey.creators.dedupe import duplicates
+        for a, b, why in duplicates(store.list_creators()):
+            print(f"  ⚠ posible duplicado: @{a['handle']} ↔ @{b['handle']} ({why})")
         for e in result["errors"]:
             print(f"  ✗ {e}")
         print("  Siguiente: harvey creators list\n")
@@ -132,14 +135,35 @@ def cmd_creators(args) -> None:
               "para no volver a añadirla.\n")
         return
 
+    if action in ("duplicates", "find"):
+        from harvey.creators.dedupe import duplicates, find
+        rows = store.list_creators()
+        if action == "find":
+            hits = find(rows, _need(args, "el nombre, usuario o web a buscar"))
+            print(f"\n  {len(hits)} coincidencia(s):")
+            for r in hits:
+                print(f"  [{r['id']}] {r['creator'].display_name or r['handle']} (@{r['handle']}) · "
+                      f"{r['status']} · actualizada {r['updated_at'][:10]}")
+            print()
+            return
+        pairs = duplicates(rows)
+        print(f"\n  {len(pairs)} posible(s) duplicado(s):")
+        for a, b, why in pairs:
+            print(f"  [{a['id']}] @{a['handle']}  ↔  [{b['id']}] @{b['handle']}  ({why})")
+        print()
+        return
+
     if action == "pipeline":
         from harvey.creators.commerce import pipeline
         rows = pipeline(store.list_creators(), store.list_proposals())
         print(f"\n  Cartera de creadoras abiertas ({len(rows)}), de más a menos prioritaria:\n")
         for r in rows:
-            canal = {"email": "email", "canal": "canal verificado"}.get(r["channel"], "sin canal")
+            ok = lambda b: "sí" if b else "no"
             print(f"  [{r['id']}] {r['name'] or r['handle']} ({r['country']}) · {r['verdict']} · "
-                  f"{canal} · prioridad {r['priority']}")
+                  f"prioridad {r['priority']}")
+            print(f"      datos verificados: {ok(r['verified'])} · canal permitido: "
+                  f"{ok(r['channel'])} · fórmula sin presupuesto: "
+                  f"{', '.join(r['viable']) if r['viable'] else 'no consta'}")
             print(f"      → {r['next']}")
         print()
         return
@@ -250,6 +274,12 @@ def cmd_creators(args) -> None:
         p = store.get_proposal(pid)
         if not p:
             sys.exit(f"  No existe {pid}")
+        if action == "approve-proposal":
+            from harvey.creators.scoring import channel_of
+            row = store.get(p["creator_id"])
+            if row and not channel_of(row["creator"]):
+                sys.exit("  No se puede aprobar: esta creadora no tiene un canal permitido para "
+                         "propuestas (un contacto general no basta, LSSI art. 21).")
         if action == "approve-proposal" and p["issues"]:
             sys.exit("  Tiene problemas sin resolver; edítala o pide otra: "
                      + "; ".join(p["issues"]))

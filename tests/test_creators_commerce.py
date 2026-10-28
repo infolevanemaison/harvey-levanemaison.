@@ -20,7 +20,8 @@ def test_a_commission_above_the_margin_never_pays():
 def test_pipeline_puts_verified_channels_first_and_says_the_next_step(tmp_path):
     st = CreatorStore(tmp_path / "c.db")
     good, _ = st.upsert(Creator(handle="con_canal_ficticia", country="ES", followers=12_000,
-                                pro_contact_source="https://plataforma.example/x"))
+                                pro_contact_source="https://plataforma.example/x",
+                                channel_kind="plataforma"))
     st.upsert(Creator(handle="sin_canal_ficticia", country="ES", followers=12_000))
     st.add_proposal(good, "es", "Hola", "Cuerpo", [])
     rows = pipeline(st.list_creators(), st.list_proposals())
@@ -31,6 +32,6 @@ def test_pipeline_puts_verified_channels_first_and_says_the_next_step(tmp_path):
 
 def test_a_discarded_creator_has_no_next_step(tmp_path):
     st = CreatorStore(tmp_path / "c.db")
-    st.upsert(Creator(handle="enorme_ficticia", country="ES", followers=900_000))
+    st.upsert(Creator(handle="extranjera_ficticia", country="US", followers=9_000))
     rows = pipeline(st.list_creators(), st.list_proposals())
     assert rows[0]["next"].startswith("ninguna")

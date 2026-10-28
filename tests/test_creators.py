@@ -35,7 +35,8 @@ def good_creator(**kw) -> Creator:
                 audience_female_pct=88, audience_35_65_pct=61, audience_target_country_pct=74,
                 comment_quality=4, content_notes="Looks de oficina con blazers",
                 pro_contact_email="colabora@estilo.example",
-                pro_contact_source="https://estilo.example/contacto")
+                pro_contact_source="https://estilo.example/contacto",
+                channel_kind="colaboraciones")
     base.update(kw)
     return Creator(**base)
 
@@ -68,9 +69,11 @@ def test_inflated_account_is_discarded_with_reasons():
     assert any("Crecimiento brusco" in w for w in s.warnings)
 
 
-def test_outside_countries_or_size_is_discarded_whatever_the_score():
+def test_outside_countries_is_discarded_but_size_alone_never_is():
     assert score_creator(good_creator(country="US")).verdict == DISCARD
-    assert score_creator(good_creator(followers=500_000)).verdict == DISCARD
+    big = score_creator(good_creator(followers=500_000))
+    assert big.verdict != DISCARD
+    assert any("Cuenta grande" in w for w in big.warnings)
 
 
 def test_missing_audience_data_is_said_not_guessed():
@@ -645,8 +648,8 @@ def test_a_creator_with_no_data_yet_is_incomplete_not_discarded():
     from harvey.creators.scoring import Creator, INCOMPLETE, DISCARD, score_creator
     s = score_creator(Creator(handle="sin_datos_ficticia", country="ES", followers=12_000))
     assert s.verdict == INCOMPLETE
-    too_big = score_creator(Creator(handle="grande_ficticia", country="ES", followers=900_000))
-    assert too_big.verdict == DISCARD          # hard rules still win
+    abroad = score_creator(Creator(handle="fuera_ficticia", country="US", followers=12_000))
+    assert abroad.verdict == DISCARD           # hard rules still win
 
 
 def test_an_audience_mostly_outside_spain_and_france_is_discarded():
@@ -692,9 +695,17 @@ def test_add_proposal_checks_the_text_and_never_duplicates(tmp_path):
 
 
 def test_a_platform_channel_counts_as_verified_but_not_as_email():
-    s = score_creator(good_creator(pro_contact_email="",
+    s = score_creator(good_creator(pro_contact_email="", channel_kind="plataforma",
                                    pro_contact_source="https://plataforma.example/perfil"))
     assert s.channel == "canal" and not s.contactable
+
+
+def test_a_general_contact_address_is_not_a_permitted_channel():
+    s = score_creator(good_creator(channel_kind="general"))
+    assert s.channel == "" and not s.contactable
+    assert any("LSSI" in w for w in s.warnings)
+    unclassified = score_creator(good_creator(channel_kind=""))
+    assert unclassified.channel == "" and any("sin clasificar" in w for w in unclassified.warnings)
 
 
 def test_small_accounts_and_blogs_are_not_discarded_for_it():

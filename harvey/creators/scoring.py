@@ -35,6 +35,7 @@ FEE_PER_1K_FOLLOWERS = {"instagram": (5.0, 12.0), "tiktok": (4.0, 10.0),
 REACH_RATE = {"instagram": 0.20, "tiktok": 0.35, "youtube": 0.25}
 
 PRIORITY, REVIEW, DISCARD = "prioritaria", "revisar", "descartar"
+PERMITTED_CHANNELS = ("colaboraciones", "plataforma", "formulario", "agencia")
 # Not enough data to judge: neither audience nor engagement is known yet.
 INCOMPLETE = "faltan datos"
 
@@ -62,6 +63,15 @@ class Creator:
     pro_contact_email: str = ""            # the professional contact SHE publishes
     pro_contact_source: str = ""           # where it is published (URL)
     quoted_fee_eur: float | None = None    # her own quote, if she gave one
+    # What kind of channel pro_contact_source is. Only a channel she opens
+    # for brand proposals may be used (LSSI art. 21 needs prior consent for
+    # commercial e-mail): "colaboraciones" (an e-mail or page she publishes
+    # for collaborations), "plataforma", "formulario", "agencia". A general
+    # contact address is "general" and is not enough.
+    channel_kind: str = ""
+    stats_verified: bool = False           # numbers from her media kit, insights or a platform's audited data
+    stats_source: str = ""                 # where the numbers come from
+    accepts: str = ""                      # what she publicly accepts: comision, producto, pago (comma-separated)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -87,6 +97,22 @@ class Score:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def channel_of(c: Creator) -> str:
+    """"email" (an e-mail she publishes for collaborations), "canal" (a
+    platform, form, agency or collaborations page she opens for brands) or
+    "" (none that may be used)."""
+    kind = (c.channel_kind or "").strip().lower()
+    if not c.pro_contact_source or kind not in PERMITTED_CHANNELS:
+        return ""
+    return "email" if kind == "colaboraciones" and c.pro_contact_email else "canal"
+
+
+def viable_terms(c: Creator) -> list[str]:
+    """The zero-budget formulas she publicly accepts (commission, product)."""
+    said = {t.strip().lower() for t in (c.accepts or "").replace(";", ",").split(",")}
+    return [t for t in ("comision", "producto") if t in said]
 
 
 def _benchmark(platform: str, followers: int) -> float:
@@ -213,22 +239,35 @@ def score_creator(c: Creator, countries=("ES", "FR"), min_followers: int = 2_000
     total = int(round(audience + engagement + authenticity + cost))
 
     # ── Hard rules: these decide the verdict whatever the score ──
-    contactable = bool(c.pro_contact_email and c.pro_contact_source)
-    channel = "email" if contactable else ("canal" if c.pro_contact_source else "")
+    kind = (c.channel_kind or "").strip().lower()
+    channel = channel_of(c)
+    contactable = channel == "email"
     if channel == "email":
-        reasons.append(f"Contacto profesional publicado por ella ({c.pro_contact_source}).")
+        reasons.append(f"Email publicado por ella para colaboraciones ({c.pro_contact_source}).")
     elif channel == "canal":
-        reasons.append(f"Canal de colaboraciones verificado: {c.pro_contact_source}. "
-                       "Se le escribe solo por esa vía, no por email.")
+        reasons.append(f"Canal de colaboraciones permitido ({kind}): {c.pro_contact_source}. "
+                       "Se le escribe solo por esa vía.")
+    elif kind == "general":
+        warnings.append("Solo consta un contacto general: no basta para una propuesta comercial "
+                        "(LSSI art. 21). Hay que encontrar un canal que ella abra para colaboraciones.")
+    elif c.pro_contact_source:
+        warnings.append("Canal sin clasificar: indica si es de colaboraciones, plataforma, "
+                        "formulario, agencia o general antes de usarlo.")
     else:
         warnings.append("No consta un canal de colaboraciones publicado por ella: no se le "
                         "escribe. Primero hay que verificar uno (web, formulario, agencia, plataforma).")
+    if c.stats_verified:
+        reasons.append(f"Estadísticas verificadas ({c.stats_source or 'fuente anotada'}).")
+    elif c.followers or c.avg_likes:
+        warnings.append("Cifras sin verificar: pide su media kit o capturas de estadísticas.")
     disqualified = []
     if countries and c.country and c.country.upper() not in {x.upper() for x in countries}:
         disqualified.append(f"país {c.country} fuera del objetivo")
     if c.followers and c.followers > max_followers:
-        disqualified.append(f"{c.followers} seguidores: por encima de {max_followers}, coste "
-                            "probablemente alto para el presupuesto")
+        # Never discarded for size alone: big accounts usually cost more,
+        # which the ranking reflects, but some take commission or product.
+        warnings.append(f"Cuenta grande ({c.followers} seguidores): coste probablemente alto; "
+                        "solo interesa si acepta comisión o producto.")
     elif c.followers and c.followers < min_followers:
         # Small is not bad: a small, well-matched audience can sell better and
         # cost less. Say it, don't discard it.

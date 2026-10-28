@@ -10,7 +10,7 @@ Nothing here contacts anyone or spends anything.
 
 from dataclasses import dataclass
 
-from harvey.creators.scoring import DISCARD, INCOMPLETE, PRIORITY, REVIEW
+from harvey.creators.scoring import DISCARD, INCOMPLETE, PRIORITY, REVIEW, channel_of, viable_terms
 from harvey.creators.tracking import Economics, break_even_orders
 
 VERDICT_POINTS = {PRIORITY: 3, REVIEW: 2, INCOMPLETE: 1, DISCARD: -5}
@@ -53,14 +53,7 @@ def _size_points(creator) -> int:
 
 
 def _channel(row: dict) -> str:
-    """The channel from the stored score, or from the creator for rows
-    scored before channels existed."""
-    detail, c = row.get("score_detail") or {}, row["creator"]
-    if detail.get("channel") is not None and "channel" in detail:
-        return detail["channel"]
-    if c.pro_contact_email and c.pro_contact_source:
-        return "email"
-    return "canal" if c.pro_contact_source else ""
+    return channel_of(row["creator"])
 
 
 def next_action(row: dict, proposals: list[dict]) -> str:
@@ -72,6 +65,9 @@ def next_action(row: dict, proposals: list[dict]) -> str:
         return "ninguna: descartada por las reglas de puntuación (ver `show`)"
     if any(p["status"] == "pending_review" for p in mine):
         pid = next(p["id"] for p in mine if p["status"] == "pending_review")
+        if not _channel(row):
+            return (f"propuesta {pid} en espera: no hay un canal permitido para enviarla "
+                    "(busca uno que ella abra para colaboraciones)")
         return f"decidir la propuesta {pid} (aprobar o rechazar)"
     if any(p["status"] == "approved" for p in mine):
         return "crear el borrador y enviarlo tú por su canal"
@@ -79,10 +75,10 @@ def next_action(row: dict, proposals: list[dict]) -> str:
         return "esperar respuesta (Harvey avisa del recordatorio a los 7 días)"
     if not _channel(row):
         return "verificar un canal de colaboraciones (web, formulario, plataforma)"
-    if detail.get("engagement_rate") is None:
-        return "pedir media kit o anotar interacción de sus últimas publicaciones"
-    if c.quoted_fee_eur is None:
-        return "preguntar sus condiciones antes de valorar el coste"
+    if not c.stats_verified:
+        return "conseguir estadísticas verificadas (media kit o capturas) antes de decidir"
+    if not viable_terms(c) and c.quoted_fee_eur is None:
+        return "saber si acepta comisión o producto, o su tarifa, antes de valorar el coste"
     return "valorar con `harvey creators value` y decidir"
 
 
@@ -93,13 +89,19 @@ def pipeline(rows: list[dict], proposals: list[dict]) -> list[dict]:
         if row["status"] in CLOSED:
             continue
         detail = row.get("score_detail") or {}
+        c = row["creator"]
+        verified, channel, viable = c.stats_verified, _channel(row), viable_terms(c)
+        # The three things that make an opportunity real: numbers she can
+        # prove, a channel we may use, and terms a zero budget can afford.
         points = (VERDICT_POINTS.get(row["verdict"], 0)
-                  + {"email": 3, "canal": 2}.get(_channel(row), 0)
-                  + _size_points(row["creator"])
+                  + (3 if channel else 0)
+                  + (3 if verified else 0)
+                  + (3 if viable else 0)
+                  + _size_points(c)
                   + (2 if detail.get("engagement_rate") else 0)
-                  + (1 if row["creator"].quoted_fee_eur is not None else 0))
-        out.append({"id": row["id"], "handle": row["handle"], "name": row["creator"].display_name,
-                    "country": row["creator"].country, "verdict": row["verdict"],
-                    "channel": _channel(row), "priority": points,
-                    "next": next_action(row, proposals)})
+                  + (1 if c.quoted_fee_eur is not None else 0))
+        out.append({"id": row["id"], "handle": row["handle"], "name": c.display_name,
+                    "country": c.country, "verdict": row["verdict"],
+                    "channel": channel, "verified": verified, "viable": viable,
+                    "priority": points, "next": next_action(row, proposals)})
     return sorted(out, key=lambda r: (-r["priority"], r["handle"]))

@@ -136,6 +136,8 @@ def creator_from_row(row: dict) -> Creator:
             continue
         if key in INT_FIELDS or key in FLOAT_FIELDS:
             data[key] = _number(key, value)
+        elif key == "stats_verified":
+            data[key] = (value or "").strip().lower() in ("1", "true", "si", "sí", "yes", "x")
         else:
             data[key] = (value or "").strip()
     if not data.get("handle"):
