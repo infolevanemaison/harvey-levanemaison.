@@ -16,7 +16,7 @@ from harvey.creators.store import CreatorStore
 ACTIONS = ("import", "export", "list", "show", "approve", "reject", "forget", "propose", "proposals",
            "show-proposal", "approve-proposal", "reject-proposal", "draft", "mark-drafted", "sent", "todo", "digest", "result",
            "followup", "reply", "inbox", "collab", "collab-set", "collabs", "link",
-           "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal", "pipeline", "value", "duplicates", "find")
+           "report", "queries", "purge", "backup", "restore", "check-backup", "add-proposal", "pipeline", "value", "duplicates", "find", "commission-sim")
 
 
 def add_parser(subparsers) -> None:
@@ -133,6 +133,24 @@ def cmd_creators(args) -> None:
         store.forget(cid)
         print(f"\n  {cid}: datos borrados. Queda solo su usuario marcado como baja, "
               "para no volver a añadirla.\n")
+        return
+
+    if action == "commission-sim":
+        # Simulation only: no commission is offered or switched on.
+        import csv as _csv
+        from harvey.creators.commerce import commission_table
+        fields = dict(f.split("=", 1) for f in (args.fields or []) if "=" in f)
+        rows = list(_csv.DictReader(open(_need(args, "el CSV de costes reales"), encoding="utf-8-sig")))
+        num = lambda k: float(fields[k].replace(",", ".")) if k in fields else None
+        table = commission_table(rows, [float(r) for r in fields.get("rates", "5,10,15").split(",")],
+                                 num("pay_rate"), num("pay_fixed"), num("discount") or 0.0)
+        print("\n  Simulación de comisiones (no se ofrece ni se activa nada):\n")
+        for line in table:
+            com = f"{line.commission:.2f} EUR" if line.commission is not None else "—"
+            prof = (f"{line.profit:.2f} EUR" if line.profit is not None
+                    else "no calculable (falta: " + ", ".join(line.missing) + ")")
+            print(f"  {line.product} · {line.rate_pct:g} % → comisión {com} · beneficio por pedido {prof}")
+        print()
         return
 
     if action in ("duplicates", "find"):

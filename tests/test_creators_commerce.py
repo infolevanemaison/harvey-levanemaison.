@@ -35,3 +35,18 @@ def test_a_discarded_creator_has_no_next_step(tmp_path):
     st.upsert(Creator(handle="extranjera_ficticia", country="US", followers=9_000))
     rows = pipeline(st.list_creators(), st.list_proposals())
     assert rows[0]["next"].startswith("ninguna")
+
+
+def test_commission_profit_only_with_every_real_cost():
+    from harvey.creators.commerce import commission_table
+    full = {"producto": "Vestido ficticio", "pvp": "60,50", "coste_proveedor": "15",
+            "envio_proveedor": "5", "iva_pct": "21"}
+    lines = commission_table([full], rates=[10], pay_rate_pct=2.1, pay_fixed=0.30)
+    # net 50.00; commission 5.00; fee 60.50*2.1% + 0.30 = 1.57; profit 50-15-5-1.57-5 = 23.43
+    assert lines[0].commission == 5.0 and lines[0].profit == 23.43 and not lines[0].missing
+    partial = dict(full, envio_proveedor="")
+    line = commission_table([partial], rates=[10], pay_rate_pct=2.1, pay_fixed=0.30)[0]
+    assert line.profit is None and line.missing == ["envio_proveedor"]
+    assert line.commission == 5.0
+    nofee = commission_table([full], rates=[10])[0]
+    assert nofee.profit is None and "comision_pago" in nofee.missing

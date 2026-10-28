@@ -105,3 +105,55 @@ def pipeline(rows: list[dict], proposals: list[dict]) -> list[dict]:
                     "channel": channel, "verified": verified, "viable": viable,
                     "priority": points, "next": next_action(row, proposals)})
     return sorted(out, key=lambda r: (-r["priority"], r["handle"]))
+
+
+# ── Commission simulation, only with real costs ─────────────────────────────
+
+REQUIRED_COSTS = ("pvp", "coste_proveedor", "envio_proveedor", "iva_pct")
+
+
+@dataclass
+class CommissionLine:
+    product: str
+    rate_pct: float
+    commission: float | None
+    profit: float | None              # per order, only when every real cost is known
+    missing: list[str]
+
+
+def _amount(value) -> float | None:
+    text = str(value or "").strip().replace("€", "").replace(",", ".")
+    try:
+        return float(text) if text else None
+    except ValueError:
+        return None
+
+
+def commission_table(costs: list[dict], rates=(5.0, 10.0, 15.0),
+                     pay_rate_pct: float | None = None, pay_fixed: float | None = None,
+                     discount_pct: float = 0.0) -> list[CommissionLine]:
+    """Per product and commission rate: the commission and, only when the
+    price, supplier cost, supplier shipping, VAT rate and payment fee are
+    all real figures, the profit per order. A missing figure is named, never
+    guessed. VAT comes out of the price (prices include it); the commission
+    is paid on the net sale (price after discount, without VAT)."""
+    out = []
+    for row in costs:
+        vals = {k: _amount(row.get(k)) for k in REQUIRED_COSTS}
+        missing = [k for k, v in vals.items() if v is None]
+        if pay_rate_pct is None or pay_fixed is None:
+            missing.append("comision_pago")
+        pvp = vals["pvp"]
+        for rate in rates:
+            commission = profit = None
+            if pvp is not None and vals["iva_pct"] is not None:
+                paid = pvp * (1 - discount_pct / 100)
+                net = paid / (1 + vals["iva_pct"] / 100)
+                commission = round(net * rate / 100, 2)
+                if not missing:
+                    fee = paid * pay_rate_pct / 100 + pay_fixed
+                    profit = round(net - vals["coste_proveedor"] - vals["envio_proveedor"]
+                                   - fee - commission, 2)
+            out.append(CommissionLine(product=row.get("producto", "?"), rate_pct=rate,
+                                      commission=commission, profit=profit, missing=missing))
+    return out
