@@ -84,7 +84,7 @@ AREAS = {
     "pedido_sin_enviar": "pedidos y entregas", "entrega_fallida": "pedidos y entregas",
     "sin_seguimiento": "pedidos y entregas", "entrega_retrasada": "pedidos y entregas",
     "pedidos_manuales_cancelados": "pedidos y entregas", "tema_de_pruebas_publicado": "tema publicado",
-    "catalogo_critico": "catálogo", "venta_sin_stock": "catálogo",
+    "catalogo_critico": "catálogo", "venta_sin_stock": "catálogo", "mejoras_conversion": "catálogo",
     "venta_con_cero_existencias": "variantes", "politica_seguir_vendiendo": "variantes", "campana_activa": "Meta Ads",
     "gasto_sin_ventas": "Meta Ads", "gasto_sobre_limite": "Meta Ads", "gasto_antes_de_pausa": "Meta Ads",
 }

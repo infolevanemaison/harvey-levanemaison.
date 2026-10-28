@@ -373,3 +373,16 @@ def test_throttled_query_waits_and_retries_within_budget():
     reader.sleep = waits.append
     assert reader.query(SHOPIFY_QUERIES["theme"]) == {"themes": {"nodes": []}}
     assert len(calls) == 2 and waits == [2] and budget.used == 2
+
+
+def test_catalog_summarises_conversion_obstacles_without_notifying():
+    from harvey.watch.checks import check_catalog
+    one_photo = {"title": "Vestido Ejemplo", "handle": "vestido-ejemplo", "tracksInventory": True,
+                 "totalInventory": 10, "mediaCount": {"count": 1}, "featuredMedia": {"alt": "x"},
+                 "collections": {"nodes": [{"handle": "vestidos"}]}, "descriptionHtml": "<p>Corto</p>",
+                 "options": [], "tags": [], "productType": "Vestido"}
+    alerts = [a for a in check_catalog([one_photo]) if a.code == "mejoras_conversion"]
+    assert len(alerts) == 1 and alerts[0].severity == "baja" and not alerts[0].needs_owner
+    assert "1 de 1 productos activos" in alerts[0].message and "Una sola foto (1)" in alerts[0].message
+    state = {"open": {}, "resolved": []}
+    assert should_notify(update_state(state, alerts, NOW)) == []

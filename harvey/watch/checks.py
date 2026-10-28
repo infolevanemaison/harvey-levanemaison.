@@ -16,7 +16,7 @@ A key that is missing is not checked and says so, rather than reporting
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from harvey.shopaudit import audit_catalog, summary
+from harvey.shopaudit import ISSUE_LABELS, audit_catalog, summary
 
 URGENT, HIGH, MEDIUM, LOW = "urgente", "alta", "media", "baja"
 SEVERITIES = (URGENT, HIGH, MEDIUM, LOW)
@@ -160,6 +160,22 @@ def check_catalog(products: list[dict]) -> list[Alert]:
         out.append(Alert(MEDIUM, "venta_sin_stock", "catalogo",
                          f"{no_tracking} productos activos se venden sin control de stock.",
                          "Verificar proveedor y stock antes de promocionarlos."))
+    # What costs conversion on every visit (the audit's "high" findings): a
+    # standing summary for the daily report, never a notification on its own.
+    high: dict[str, int] = {}
+    for a in audits:
+        for f in a.findings:
+            if f.severity == "high":
+                high[f.code] = high.get(f.code, 0) + 1
+    if high:
+        top = sorted(high.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+        affected = sum(1 for a in audits if any(f.severity == "high" for f in a.findings))
+        names = ", ".join(f"{ISSUE_LABELS.get(code, code)} ({n})" for code, n in top)
+        out.append(Alert(LOW, "mejoras_conversion", "catalogo",
+                         f"Obstáculos de conversión en {affected} de {s['products']} productos activos: "
+                         f"{names}.",
+                         "Ver `harvey shop audit`; empezar por los productos con más visitas. Cada "
+                         "cambio en la tienda necesita tu aprobación."))
     return out
 
 
