@@ -1,6 +1,13 @@
 """The read-only queries the watch runs. Each passes guard.check_query."""
 
-from harvey.shopaudit import PRODUCTS_QUERY
+from harvey.shopaudit import PRODUCTS_QUERY as _AUDIT_PRODUCTS_QUERY
+
+# The audit query also asks for each variant's delivery profile, which needs
+# the read_shipping scope. The watch keeps to four read scopes, so it drops
+# that field; the audit skips the shipping check when the field is missing.
+_DELIVERY = "\nvariants(first:1){nodes{deliveryProfile{name}}} } } }"
+assert _DELIVERY in _AUDIT_PRODUCTS_QUERY
+PRODUCTS_QUERY = _AUDIT_PRODUCTS_QUERY.replace(_DELIVERY, " } } }")
 
 ORDERS_QUERY = """query($first: Int!, $after: String, $q: String) {
   orders(first: $first, after: $after, query: $q, sortKey: CREATED_AT, reverse: true) {

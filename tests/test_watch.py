@@ -291,3 +291,33 @@ def test_daily_report_groups_open_items_and_lists_recent_resolutions():
     update_state(state, check_theme({"id": "t", "name": "NO PUBLICAR"}, Settings()), NOW + timedelta(hours=2))
     text = daily_report(state, NOW + timedelta(hours=2))
     assert "**tema publicado**" in text and "#9020" in text.split("Resueltas en las últimas 24 h")[1]
+
+
+def test_one_failing_shopify_source_does_not_hide_the_others(monkeypatch):
+    from harvey.watch import fetch
+
+    def handler(request):
+        if request.url.path.endswith("/access_token"):
+            return httpx.Response(200, json={"access_token": "tok", "scope": "read_orders,read_products,read_themes"})
+        query = json.loads(request.content)["query"]
+        if "orders(" in query:
+            return httpx.Response(200, json={"data": {"orders": {"nodes": [], "pageInfo": {}}}})
+        if "products(" in query:
+            denied = {"message": "Access denied for someField field.", "extensions": {"code": "ACCESS_DENIED"}}
+            return httpx.Response(200, json={"errors": [denied] * 50})
+        return httpx.Response(200, json={"data": {"themes": {"nodes": [{"id": "t", "name": "Tema"}]}}})
+
+    transport, real_client = httpx.MockTransport(handler), httpx.Client
+    monkeypatch.setattr(fetch.httpx, "Client", lambda **kw: real_client(transport=transport))
+    env = {"SHOPIFY_SHOP": "ejemplo.myshopify.com", "SHOPIFY_CLIENT_ID": "id", "SHOPIFY_CLIENT_SECRET": "sec"}
+    snap, errors = fetch.snapshot_from_env(env=env)
+    assert set(snap) == {"orders", "theme"} and snap["theme"]["name"] == "Tema"
+    assert len(errors) == 1 and errors[0].startswith("products:")
+    assert errors[0].count("Access denied") == 1 and "sec" not in errors[0]
+
+
+def test_watch_products_query_needs_no_shipping_scope():
+    from harvey.watch.queries import PRODUCTS_QUERY
+    assert "deliveryProfile" not in PRODUCTS_QUERY
+    assert PRODUCTS_QUERY.count("{") == PRODUCTS_QUERY.count("}")
+    check_query(PRODUCTS_QUERY)

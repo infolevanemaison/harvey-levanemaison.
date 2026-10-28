@@ -74,6 +74,21 @@ def shopify_token(shop: str, client_id: str, client_secret: str, budget: Budget,
     return token
 
 
+def summarise_errors(errors) -> str:
+    """Distinct messages only: one denied field must not fill a report with 50 copies."""
+    if not isinstance(errors, list):
+        return str(errors)[:200]
+    seen = []
+    for e in errors:
+        msg = (e.get("message") if isinstance(e, dict) else str(e)) or "error"
+        code = (e.get("extensions") or {}).get("code", "") if isinstance(e, dict) else ""
+        text = f"{msg} ({code})" if code else msg
+        if text not in seen:
+            seen.append(text[:200])
+    more = f" y {len(seen) - 3} más" if len(seen) > 3 else ""
+    return "; ".join(seen[:3]) + more
+
+
 class ShopifyReader:
     def __init__(self, shop: str, token: str, budget: Budget, client: httpx.Client | None = None):
         if not shop.endswith(".myshopify.com"):
@@ -93,7 +108,7 @@ class ShopifyReader:
             raise RuntimeError(_clean(f"Shopify: {e}", self.token)) from None
         body = r.json()
         if body.get("errors"):
-            raise RuntimeError(_clean(f"Shopify: {body['errors']}", self.token))
+            raise RuntimeError(_clean(f"Shopify: {summarise_errors(body['errors'])}", self.token))
         return body.get("data") or {}
 
     def nodes(self, name: str, root: str, variables: dict, max_pages: int = 5) -> list[dict]:
@@ -147,13 +162,21 @@ def snapshot_from_env(env=os.environ, budget: Budget | None = None,
         try:
             token = shopify_token(shop, cid, secret, budget)
             reader = ShopifyReader(shop, token, budget)
-            since = (datetime.now(UTC) - timedelta(days=order_days)).date().isoformat()
-            snap["orders"] = reader.nodes("orders", "orders", {"first": 50, "q": f"created_at:>={since}"})
-            snap["products"] = reader.nodes("products", "products", {"first": 50})
-            themes = reader.query(SHOPIFY_QUERIES["theme"])["themes"]["nodes"]
-            snap["theme"] = themes[0] if themes else {}
         except Exception as e:  # noqa: BLE001 - a failed source is reported, not fatal
             errors.append(_clean(str(e), token, cid, secret))
+            reader = None
+        since = (datetime.now(UTC) - timedelta(days=order_days)).date().isoformat()
+        # Each source on its own: one that fails must not hide the others.
+        sources = {
+            "orders": lambda: reader.nodes("orders", "orders", {"first": 50, "q": f"created_at:>={since}"}),
+            "products": lambda: reader.nodes("products", "products", {"first": 50}),
+            "theme": lambda: (reader.query(SHOPIFY_QUERIES["theme"])["themes"]["nodes"] or [{}])[0],
+        }
+        for key, read in sources.items() if reader else ():
+            try:
+                snap[key] = read()
+            except Exception as e:  # noqa: BLE001
+                errors.append(_clean(f"{key}: {e}", token, cid, secret))
     account, mtoken = env.get("META_AD_ACCOUNT", ""), env.get("META_READ_TOKEN", "")
     if account and mtoken:
         try:
