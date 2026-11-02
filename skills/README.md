@@ -22,6 +22,7 @@ When an agent runs, it calls `brain.load_skills_for_agent("agent_name")` which c
 | `product_knowledge.md` | x | x | x | x | x |
 | `competitive_intel.md` | | x | x | | |
 | `selling_to_startups.md` | | x* | x* | | |
+| `influencer_partnerships.md` | | x | x | | |
 
 \* Only for prospects whose company is a startup by its own site's account (the `YC_BACKED` or `ACCELERATOR` signal, or a `FUNDING_ROUND` from the last 18 months), not loaded for everyone.
 
@@ -32,6 +33,7 @@ When an agent runs, it calls `brain.load_skills_for_agent("agent_name")` which c
 - **`account_navigation.md`** — Multi-contact handling, entry point strategy, multi-threading rules
 - **`selling_to_startups.md`** — Writing to early-stage founders: who reads, timing around a YC or accelerator batch and Demo Day, writing to companies that just raised (and when a raise is too old to mention), what not to do, handling their replies. Used automatically for YC-backed, accelerator-backed and recently funded prospects.
 - **`signal_playbook.md`** — Turning buying signals (hiring, tech stack, funding) into the email's first line; which signal wins when there are several; using a job posting as the hook without guessing or implying inside knowledge
+- **`influencer_partnerships.md`** — Proposing a collaboration to a fashion creator in Spain or France: fit, the first message, advertising labelling rules (Ley 13/2022, RD 444/2024, loi 2023-451), handling her replies, what to measure
 - **`email_frameworks.md`** — Cold email copywriting rules, banned AI patterns, 2026 reply-rate data (length, offer CTAs, cadence, no tracking), 5 frameworks (AIDA, PAS, BAB, QVC, 3Ps)
 - **`sales_methodology.md`** — ABC Loop, conversation flow, tone calibration, ethical guidelines
 - **`offer_strategy.md`** — Offer ladder by engagement level, closing mechanics, timing rules

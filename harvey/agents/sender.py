@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from harvey.brain import Brain
 from harvey.config import (
     HarveyConfig, EnvConfig, cold_daily_cap, compliance_footer_lines, compliance_notice,
+    draft_only,
     compliance_of, live_do_not_contact, operator_timezone, send_window_of,
 )
 from harvey.gate import autopilot_review, do_not_contact_match, pre_send_check
@@ -695,6 +696,44 @@ class Sender:
             return body
         return body.rstrip() + "\n\n" + footer
 
+    async def _draft(self, item: dict, body: str) -> bool:
+        """Draft-only mode: save the claimed email as a Gmail draft.
+
+        The outbox item becomes 'drafted' and the prospect stays as they
+        were: nothing has reached them until the person sends the draft
+        from Gmail. A follow-up whose earlier step was only drafted is
+        cancelled by _follow_up_order, so Harvey never stacks follow-ups on
+        an email it can't know was sent."""
+        try:
+            result = await self.provider.create_draft(
+                item["to_email"], item["subject"], body,
+                thread_ref=item.get("thread_ref", ""),
+                in_reply_to=item.get("in_reply_to", ""),
+            )
+        except Exception as e:
+            result = None
+            error = f"draft error: {e}"
+        else:
+            error = result.error
+        if result is None or not result.ok:
+            # A draft is never sent, so failing it can't double-contact anyone.
+            await self.state.update_outbox_item(
+                item["id"], status="failed", error=(error or "draft failed")[:300])
+            logger.warning(f"Sender: draft for {item['to_email']} failed: {error}")
+            return False
+        await self.state.update_outbox_item(
+            item["id"], status="drafted", body=body, error="",
+            message_id=result.message_id, thread_ref=result.thread_ref,
+        )
+        await self.state.log_action(
+            action_type="email_drafted", agent="sender",
+            details={"to": item["to_email"], "step": item["step"], "kind": item["kind"],
+                     "provider": self.provider.name},
+        )
+        logger.info(f"Sender: saved step {item['step']} to {item['to_email']} as a Gmail "
+                    "draft. Nothing was sent.")
+        return True
+
     def _outgoing_body(self, item: dict) -> str:
         """The exact body that goes out: cold email gets the footer, replies don't."""
         if item["kind"] == "sequence":
@@ -1016,6 +1055,10 @@ class Sender:
                 continue
 
             body = self._outgoing_body(item)
+            if draft_only(self.config):
+                if await self._draft(item, body):
+                    sent += 1
+                continue
             try:
                 result = await self.provider.send_email(
                     item["to_email"], item["subject"], body,

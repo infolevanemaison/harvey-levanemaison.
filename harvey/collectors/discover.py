@@ -33,6 +33,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from harvey.locales import DATAFORSEO_COUNTRY_CODES, outreach_country, outreach_language
 from harvey.models import Company
 
 logger = logging.getLogger("harvey.collectors.discover")
@@ -384,6 +385,8 @@ class DiscoveryQuery:
     depth: int = 30                  # SERP depth; ignored by listings providers
     limit: int = 100                 # max records to take from one query
     preset: str = ""                 # PRESETS key that built it, if any
+    language: str = "en"             # results language (locale.language)
+    country: str = ""                # ISO country (locale.country), "" = US default
 
     def keyword(self) -> str:
         return f"{self.term} {self.location}".strip()
@@ -440,7 +443,7 @@ def _dfs_location(query: "DiscoveryQuery", point_suffix: str) -> dict:
             return {"location_coordinate": f"{lat.strip()},{lng.strip()},{point_suffix}"}
     if query.location:
         return {"location_name": dataforseo_location_name(query.location)}
-    return {"location_code": DEFAULT_LOCATION_CODE}
+    return {"location_code": DATAFORSEO_COUNTRY_CODES.get(query.country, DEFAULT_LOCATION_CODE)}
 
 
 # ── Provider adapters ─────────────────────────────────────────────────
@@ -667,7 +670,7 @@ class DataForSEOSerp(DiscoveryProvider):
     async def fetch(self, client, env, query):
         keyword = query.keyword()
         items = await self._post(client, env, "serp/google/organic/live/advanced", {
-            "keyword": keyword, "language_code": "en", "depth": query.depth,
+            "keyword": keyword, "language_code": query.language or "en", "depth": query.depth,
             "device": "desktop", **_dfs_location(query, self.POINT_RADIUS)})
 
         # One Business per identity: a company in the pack AND at organic 14
@@ -747,7 +750,7 @@ class DataForSEOMaps(DataForSEOSerp):
     async def fetch(self, client, env, query):
         keyword = query.keyword()
         items = await self._post(client, env, "serp/google/maps/live/advanced", {
-            "keyword": keyword, "language_code": "en", "depth": query.depth,
+            "keyword": keyword, "language_code": query.language or "en", "depth": query.depth,
             **_dfs_location(query, self.ZOOM)})
         out = []
         for item in items:
@@ -829,7 +832,11 @@ class Serper(DiscoveryProvider):
                      "Content-Type": "application/json"},
             # Free accounts reject num > 10 (HTTP 400 "Query pattern not
             # allowed for free accounts"), verified 2026-10-26.
-            json={"q": query.keyword(), "num": max(1, min(query.depth, 10))},
+            json={"q": query.keyword(), "num": max(1, min(query.depth, 10)),
+                  # Local results for a Spanish or French locale; unset keeps
+                  # Serper's default (US English).
+                  **({"gl": query.country.lower()} if query.country else {}),
+                  **({"hl": query.language} if query.language not in ("", "en") else {})},
         )
         r.raise_for_status()
         data = r.json()
@@ -1627,10 +1634,12 @@ def build_queries(config, cities: list[str] | None = None,
             v.strip() for t in terms for v in [t, *variants.get(t, [])] if v.strip()))
         places = cities if cities is not None else list(icp.geography) or [""]
     coords = getattr(icp, "geo_coordinates", {}) or {}
+    language, country = outreach_language(config), outreach_country(config)
 
     return [
         DiscoveryQuery(term=term, location=place, depth=depth, limit=limit,
-                       coordinate=coords.get(place, ""), preset=preset if spec else "")
+                       coordinate=coords.get(place, ""), preset=preset if spec else "",
+                       language=language, country=country)
         for term in terms
         for place in places
     ]

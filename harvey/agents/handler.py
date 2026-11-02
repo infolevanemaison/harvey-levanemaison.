@@ -14,11 +14,12 @@ from datetime import datetime, timezone
 
 from harvey.brain import Brain, BrainUnavailable
 from harvey.config import (
-    DEFAULT_OPT_OUT_LINE, HarveyConfig, EnvConfig, compliance_of, legacy_sending_held,
-    live_do_not_contact,
+    DEFAULT_OPT_OUT_LINE, HarveyConfig, EnvConfig, compliance_footer_lines, compliance_of,
+    legacy_sending_held, live_do_not_contact,
 )
 from harvey.gate import autopilot_review, do_not_contact_match, pre_send_check
 from harvey.humanize import humanize, humanizer_enabled
+from harvey.locales import fold, reply_language_rule
 from harvey.integrations.instantly import InstantlyClient
 from harvey.integrations.mail_provider import (
     NATIVE_PROVIDERS, get_mail_provider, strip_quoted_reply,
@@ -71,15 +72,92 @@ OPT_OUT_PATTERNS = (
     "never contact",
     "delete my info",
     "delete my data",
+    # Spanish (Spain). Matched against accent-folded text (locales.fold).
+    # Never bare "de baja": "estoy de baja" is sick leave, not an opt-out.
+    "darme de baja",
+    "dame de baja",
+    "dadme de baja",
+    "deme de baja",
+    "denme de baja",
+    "quiero la baja",
+    "solicito la baja",
+    "no me escribas",
+    "no me escriba",
+    "no me escriban",
+    "no me escribais",
+    "no me contactes",
+    "no me contacte",
+    "no me contacten",
+    "no me contacteis",
+    "no vuelvas a escribir",
+    "no vuelva a escribir",
+    "no volvais a escribir",
+    "no vuelvan a escribir",
+    "deja de escribir",
+    "deje de escribir",
+    "dejad de escribir",
+    "dejen de escribir",
+    "deja de enviar",
+    "deje de enviar",
+    "dejad de enviar",
+    "dejen de enviar",
+    "borra mis datos",
+    "borre mis datos",
+    "borrad mis datos",
+    "borren mis datos",
+    "elimina mis datos",
+    "elimine mis datos",
+    "eliminad mis datos",
+    "eliminen mis datos",
+    "suprimid mis datos",
+    "no deseo recibir",
+    "no quiero recibir",
+    "quitame de",
+    "quiteme de",
+    "quitadme de",
+    "quitenme de",
+    "sacame de",
+    "sacadme de",
+    "eliminame de",
+    "eliminadme de",
+    # French (France)
+    "desinscri",          # désinscrire, désinscrivez-moi, désinscription
+    "desabonn",           # désabonner, désabonnez-moi, désabonnement
+    "ne plus recevoir",
+    "ne m'ecrivez plus",
+    "ne m'ecris plus",
+    "ne me contactez plus",
+    "ne me contacte plus",
+    "ne plus me contacter",
+    "ne plus m'ecrire",
+    "arretez de m'ecrire",
+    "arretez de m'envoyer",
+    "cessez de m'ecrire",
+    "cessez de m'envoyer",
+    "retirez-moi",
+    "retirez moi",
+    "supprimez mes donnees",
+    "effacez mes donnees",
+    "rayez-moi",
+    "rayez moi",
+    "je m'oppose",
 )
 # "No thanks" (what cold email's footer asks for) as a phrase: not "no
 # Thanksgiving", "Bruno / Thanks," or "yes or no, thanks".
 # Checked one line at a time: "...the answer is no / Thanks!" is a sign-off.
 NO_THANKS_RE = re.compile(
-    r"(?<!\bor )\bno,?[ \t]+thank(?:s|[ \t]+you)\b(?![ \t]+(?:needed|necessary|required))")
+    r"(?<!\bor )\bno,?[ \t]+thank(?:s|[ \t]+you)\b(?![ \t]+(?:needed|necessary|required))"
+    # "No, gracias" / "No, muchas gracias", not "o no, gracias" or "no gracias a ti".
+    r"|(?<!\bo )\bno,?[ \t]+(?:muchas[ \t]+)?gracias\b(?![ \t]+a\b)"
+    # "Non merci", not "ou non merci".
+    r"|(?<!\bou )\bnon,?[ \t]+merci\b")
 # A reply that says only this (signature aside) is an opt-out ("Reply STOP").
 BARE_OPT_OUTS = {"stop", "unsubscribe", "remove", "remove me", "opt out",
-                 "no thanks", "no thank you"}
+                 "no thanks", "no thank you",
+                 # Spanish and French, accent-folded
+                 "baja", "la baja", "darme de baja", "no gracias", "no muchas gracias",
+                 "non merci", "desinscription", "desinscrire", "desabonnement",
+                 "desabonner", "arret"}
 _MOBILE_SIGNATURE_RE = re.compile(
     r"^[ \t]*(?:sent from my \w[^\n]*|get outlook for \w[^\n]*|sent from \w+ mail[^\n]*)$",
     re.IGNORECASE | re.MULTILINE)
@@ -150,17 +228,17 @@ def _opt_out_reason(their_text: str, own_words: str) -> dict | None:
     reply without the quote. Longer phrases match across a line wrap; "no
     thanks" only within a line. The result is kept with the opt-out so a
     human can see why Harvey stopped, and undo it if it was wrong."""
-    flat = _flat(their_text)
+    flat = fold(_flat(their_text))
     for p in OPT_OUT_PATTERNS:
         if p in flat:
             return {"rule": "phrase", "matched": p,
                     "why": f'Their reply contains "{p}".'}
     for line in their_text.split("\n"):
-        m = NO_THANKS_RE.search(_flat(line))
+        m = NO_THANKS_RE.search(fold(_flat(line)))
         if m:
             return {"rule": "no_thanks", "matched": m.group(0),
                     "why": f'Their reply says "{m.group(0)}", what the opt-out line asks for.'}
-    bare = _flat(_MOBILE_SIGNATURE_RE.sub("", own_words or ""))
+    bare = fold(_flat(_MOBILE_SIGNATURE_RE.sub("", own_words or "")))
     bare = re.sub(r"[^\w\s-]", "", bare).strip()
     if bare in BARE_OPT_OUTS:
         return {"rule": "only_words", "matched": bare,
@@ -187,6 +265,21 @@ ESCALATION_PATTERNS = (
     "gdpr",
     "can-spam",
     "blacklist",
+    # Spanish (Spain), accent-folded
+    "abogado",
+    "denuncia",
+    "denunciar",
+    "aepd",
+    "proteccion de datos",
+    "rgpd",
+    "lopd",
+    "acoso",
+    # French (France), accent-folded
+    "avocat",
+    "plainte",
+    "cnil",
+    "mise en demeure",
+    "harcelement",
 )
 
 
@@ -371,6 +464,7 @@ class Handler:
             *await self.state.get_texts_for_prospect(prospect.id),
             *await self.state.get_footer_history(),
             compliance.postal_address, compliance.opt_out_line, DEFAULT_OPT_OUT_LINE,
+            *compliance_footer_lines(self.config),
         ])
 
     async def _stop_colleagues(self, prospect):
@@ -460,7 +554,7 @@ class Handler:
         # sent (our footer says "no thanks") is ours, not theirs.
         ours = await self._our_text(prospect)
         their_text = ours.remove(reply_text)
-        keyword_text = _flat(their_text)
+        keyword_text = fold(_flat(their_text))
         stripped = strip_quoted_reply(reply_text) or reply_text
         reply_text = ours.remove(stripped).strip() or stripped
 
@@ -972,6 +1066,7 @@ Product: {self.config.product.name} — {self.config.product.description}"""
             playbook = self.brain.load_skill("selling_to_startups")
             if playbook:
                 prompt += "\n\nSELLING TO STARTUP FOUNDERS\n" + playbook
+        prompt += reply_language_rule(self.config)
 
         prompt += f"""
 

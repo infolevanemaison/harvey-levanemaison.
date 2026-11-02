@@ -77,6 +77,44 @@ class ICPConfig(BaseModel):
     keyword_variants: dict[str, list[str]] = {}
 
 
+class LocaleConfig(BaseModel):
+    """The language Harvey writes in and the country it prospects in.
+
+    "en" with no country is Harvey's original behaviour. "es" writes in
+    Spanish from Spain, "fr" in French from France: the writer, the
+    pre-send gate, opt-out detection, web search and the footer all follow
+    (see harvey/locales.py). formality picks "tú"/"usted" in Spanish;
+    French business email is always "vous".
+    """
+    language: str = "en"        # en | es | fr
+    country: str = ""           # ISO code, e.g. ES or FR; "" = from language
+    formality: str = "formal"   # formal | informal
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _known_language(cls, v):
+        v = (v or "en").strip().lower()
+        if v not in ("en", "es", "fr"):
+            raise ValueError("locale.language must be en, es or fr")
+        return v
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def _country_code(cls, v):
+        v = (v or "").strip().upper()
+        if v and not re.fullmatch(r"[A-Z]{2}", v):
+            raise ValueError("locale.country must be a two-letter code, e.g. ES or FR")
+        return v
+
+    @field_validator("formality", mode="before")
+    @classmethod
+    def _known_formality(cls, v):
+        v = (v or "formal").strip().lower()
+        if v not in ("formal", "informal"):
+            raise ValueError("locale.formality must be formal or informal")
+        return v
+
+
 class WarmupConfig(BaseModel):
     """Cold-email ramp for a new domain or mailbox.
 
@@ -219,6 +257,11 @@ class EmailChannelConfig(BaseModel):
     # outbox, so it holds campaigns and escalates replies while this is true.
     # Set false explicitly for full autopilot once you trust the output.
     require_approval: bool = True
+    # Draft-only mode (Gmail only): an approved email becomes a draft in your
+    # Gmail instead of being sent. You open it in the Gmail app, edit it if
+    # you like, and press send yourself. Harvey never sends anything while
+    # this is true: the provider refuses to send, not just the sender.
+    draft_only: bool = False
     # Your own domains besides the sending address's and the booking link's
     # (e.g. your main site when you send from a secondary domain). On
     # autopilot, an email linking anywhere else waits in the Outbox.
@@ -246,6 +289,14 @@ class EmailChannelConfig(BaseModel):
             raise ValueError("max_daily_sends must be >= 0")
         return v
 
+    @model_validator(mode="after")
+    def _drafts_need_gmail(self):
+        if self.draft_only and self.provider != "gmail":
+            raise ValueError(
+                "channels.email.draft_only works with provider: gmail only "
+                "(Harvey writes the drafts into your Gmail)")
+        return self
+
     def cold_daily_cap(self, today: _date | None = None) -> int:
         """Today's cap on cold (sequence) email: max_daily_sends, throttled
         by the warmup ramp. Replies count only toward max_daily_sends."""
@@ -271,8 +322,17 @@ def legacy_sending_held(config) -> bool:
             and bool(getattr(email, "require_approval", True)))
 
 
+def draft_only(config) -> bool:
+    """True when approved email becomes a Gmail draft instead of being sent."""
+    email = getattr(getattr(config, "channels", None), "email", None)
+    return getattr(email, "draft_only", False) is True
+
+
 def sending_notice(config) -> str:
     """A plain-language warning when outbound sending is held by config, or ""."""
+    if draft_only(config):
+        return ("Draft-only mode: approved emails become drafts in your Gmail. "
+                "Nothing is sent until you send it yourself from Gmail.")
     if not legacy_sending_held(config):
         return ""
     return (
@@ -376,9 +436,13 @@ DEFAULT_OPT_OUT_LINE = 'Not interested? Reply "no thanks" and I won\'t email aga
 # The replies the Handler always honours as an opt-out on their own; an
 # opt_out_line must ask for one of them ("Reply STOP", 'reply "no thanks"').
 OPT_OUT_WORDS = ("no thanks", "no thank you", "unsubscribe", "stop", "remove me",
-                 "opt out")
+                 "opt out",
+                 # Spanish and French (harvey/locales.py), matched without accents.
+                 "baja", "no gracias", "non merci", "desinscription", "desabonnement")
 _ASKS_FOR_OPT_OUT_RE = re.compile(
-    r"\breply(?:\s+with)?\s*[\"'\u201c\u2018]?\s*(?:"
+    r"\b(?:reply(?:\s+with)?|respond[ae](?:\s+con)?|contest[ae](?:\s+con)?"
+    r"|repondez(?:\s+par)?|repondre(?:\s+par)?)"
+    r"\s*[\"'\u201c\u2018\u00ab]?\s*(?:"
     + "|".join(re.escape(w) for w in OPT_OUT_WORDS) + r")\b", re.IGNORECASE)
 
 
@@ -444,7 +508,8 @@ class ComplianceConfig(BaseModel):
                 "opt_out_line can't contain a link or an email address: cold email "
                 "allows one link, and opting out must be as simple as replying."
             )
-        if not _ASKS_FOR_OPT_OUT_RE.search(v):
+        from harvey.locales import fold
+        if not _ASKS_FOR_OPT_OUT_RE.search(fold(v)):
             raise ValueError(
                 "opt_out_line must ask for a reply Harvey recognises as an opt-out, "
                 'e.g. Reply "no thanks" / Reply STOP. Recognised: '
@@ -460,10 +525,17 @@ def compliance_of(config) -> ComplianceConfig:
 
 
 def compliance_footer_lines(config) -> list[str]:
-    """The lines added under every cold email: address, then opt-out line."""
+    """The lines added under every cold email: address, then opt-out line.
+
+    An opt-out line left at the English default is written in the outreach
+    language instead (locale.language), so a Spanish email doesn't end in
+    English."""
+    from harvey.locales import default_opt_out_line
     compliance = compliance_of(config)
-    return [line for line in (compliance.postal_address.strip(),
-                              compliance.opt_out_line.strip()) if line]
+    opt_out = compliance.opt_out_line.strip()
+    if opt_out == DEFAULT_OPT_OUT_LINE:
+        opt_out = default_opt_out_line(config) or opt_out
+    return [line for line in (compliance.postal_address.strip(), opt_out) if line]
 
 
 def compliance_notice(config) -> str:
@@ -596,6 +668,47 @@ class WriterConfig(BaseModel):
     humanizer: bool = False
 
 
+class CreatorOfferConfig(BaseModel):
+    """What a creator may be offered. Until a person sets approved: true,
+    proposals may only ask whether she'd like to talk: no gift, commission,
+    discount, code or fee is mentioned, and the code refuses any that is."""
+    approved: bool = False
+    gift_max_cost_eur: float = 0.0       # cost to you of the pieces, per creator
+    commission_pct: float = 0.0          # % of net sales through her link/code
+    community_discount_pct: float = 0.0  # % off for her followers
+    paid_fee: bool = False               # a fee may be discussed (never quoted by Harvey)
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def _sane(self):
+        for name in ("gift_max_cost_eur", "commission_pct", "community_discount_pct"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"creators.offer.{name} can't be negative")
+        if self.commission_pct > 50 or self.community_discount_pct > 50:
+            raise ValueError("creators.offer percentages above 50 look like a typo")
+        return self
+
+
+class CreatorEconomicsConfig(BaseModel):
+    """Your numbers, for break-even and profitability. 0 = not set yet."""
+    gross_margin_pct: float = 0.0        # product margin before marketing
+    avg_order_value_eur: float = 0.0
+    shipping_cost_per_gift_eur: float = 0.0
+
+
+class CreatorsConfig(BaseModel):
+    """The creator (influencer) module: harvey/creators/."""
+    countries: list[str] = ["ES", "FR"]
+    min_followers: int = 2_000
+    max_followers: int = 150_000
+    # The site the UTM links point to, and where your privacy policy lives.
+    landing_base_url: str = ""
+    privacy_url: str = ""
+    code_prefix: str = ""                # e.g. "LVM" -> LVM-ANA10
+    offer: CreatorOfferConfig = CreatorOfferConfig()
+    economics: CreatorEconomicsConfig = CreatorEconomicsConfig()
+
+
 class HarveyConfig(BaseModel):
     persona: PersonaConfig
     product: ProductConfig
@@ -605,6 +718,8 @@ class HarveyConfig(BaseModel):
     brain: BrainConfig = BrainConfig()
     compliance: ComplianceConfig = ComplianceConfig()
     writer: WriterConfig = WriterConfig()
+    locale: LocaleConfig = LocaleConfig()
+    creators: CreatorsConfig = CreatorsConfig()
     # The file it was loaded from, so a running Harvey can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)
